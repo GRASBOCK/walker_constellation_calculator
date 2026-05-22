@@ -49,10 +49,9 @@ impl Constellation {
     /// the arccos argument is clamped defensively.
     pub fn coverage_half_angle(&self) -> f32 {
         let alpha = self.fov * 0.5;
-        let ratio = self.radius / (self.radius + self.altitude);
+        let ratio = (self.radius + self.altitude) / self.radius;
         let x = (ratio * alpha.sin()).clamp(-1.0, 1.0);
-        let epsilon = x.acos();
-        PI / 2.0 - alpha - epsilon
+        x.asin() - alpha
     }
 
     /// Effective equatorial swath λ_swath = 2σ / sin(i), in radians.
