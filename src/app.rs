@@ -1,3 +1,5 @@
+use crate::constellation::{self, Constellation};
+
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)] // if we add new fields, give them default values when deserializing old state
@@ -61,11 +63,6 @@ impl eframe::App for App {
             ui.heading("Walker Constellation Calculator");
 
             ui.horizontal(|ui| {
-                ui.label("Write something: ");
-                ui.text_edit_singleline(&mut self.label);
-            });
-
-            ui.horizontal(|ui| {
                 ui.label("inclination [°]:")
                     .on_hover_text("orbital inclincation in degrees");
                 ui.add(
@@ -73,6 +70,11 @@ impl eframe::App for App {
                         .speed(0.5)
                         .range(0.0..=90.0),
                 );
+                ui.label("altitude [km]: ")
+                    .on_hover_text("Height above the planets surface");
+                ui.add(egui::DragValue::new(&mut self.altitude).speed(0.5));
+            });
+            ui.horizontal(|ui| {
                 ui.label("Satellites:")
                     .on_hover_text("Number of Satellites per Plane");
                 ui.add(egui::DragValue::new(&mut self.satellites).speed(1.0));
@@ -86,48 +88,48 @@ impl eframe::App for App {
                 .on_hover_text("Total number of Satellites of Satellites in Constellation");
             });
             ui.horizontal(|ui| {
-                ui.label("altitude [km]: ")
-                    .on_hover_text("Height above the planets surface");
-                ui.add(egui::DragValue::new(&mut self.altitude).speed(0.5));
-                ui.label("µ: ")
+                ui.label("µ [m³/s²]: ")
                     .on_hover_text("Standard Gravitational Parameter [m³/s²]");
                 ui.add(egui::DragValue::new(&mut self.mu).speed(1.0));
-                ui.label("ω: ")
+                ui.label("ω [°/h]: ")
                     .on_hover_text("Rotation Speed of Planet in degrees per hour [°/h]");
                 ui.add(egui::DragValue::new(&mut self.omega).speed(1.0));
+                ui.label("R [km]: ")
+                    .on_hover_text("Radius of the planet in km");
+                ui.add(egui::DragValue::new(&mut self.radius).speed(1.0));
 
                 let mut selected_planet: Option<(&str, f32, f32, f32)> = None;
                 ui.menu_button(egui::RichText::new("🌍"), |ui| {
                     if ui.button("Mercury").clicked() {
-                        selected_planet = Some(("Mercury", 22032.0, 6.138e-7, 2439.7));
+                        selected_planet = Some(("Mercury", 22032E9, 0.00220968, 2439.7));
                         ui.close();
                     }
                     if ui.button("Venus").clicked() {
-                        selected_planet = Some(("Venus", 324859.0, -2.992e-7, 6051.8));
+                        selected_planet = Some(("Venus", 324859E9, -0.00107712, 6051.8));
                         ui.close();
                     }
                     if ui.button("Earth").clicked() {
-                        selected_planet = Some(("Earth", 398600.4418, 360.0 / 24.0, 6378.1));
+                        selected_planet = Some(("Earth", 3.986004418E14, 15.0, 6378.1));
                         ui.close();
                     }
                     if ui.button("Mars").clicked() {
-                        selected_planet = Some(("Mars", 42828.0, 7.088e-5, 3389.5));
+                        selected_planet = Some(("Mars", 42828E9, 0.255168, 3389.5));
                         ui.close();
                     }
                     if ui.button("Jupiter").clicked() {
-                        selected_planet = Some(("Jupiter", 126686534.0, 1.75853e-4, 69911.0));
+                        selected_planet = Some(("Jupiter", 126686534E9, 0.6330708, 69911.0));
                         ui.close();
                     }
                     if ui.button("Saturn").clicked() {
-                        selected_planet = Some(("Saturn", 37931187.0, 1.6379e-4, 58232.0));
+                        selected_planet = Some(("Saturn", 37931187E9, 0.589644, 58232.0));
                         ui.close();
                     }
                     if ui.button("Uranus").clicked() {
-                        selected_planet = Some(("Uranus", 5793939.0, -1.012e-4, 25362.0));
+                        selected_planet = Some(("Uranus", 5793939E9, -0.36432, 25362.0));
                         ui.close();
                     }
                     if ui.button("Neptune").clicked() {
-                        selected_planet = Some(("Neptune", 6836529.0, 1.083e-4, 24622.0));
+                        selected_planet = Some(("Neptune", 6836529E9, 0.38988, 24622.0));
                         ui.close();
                     }
                 });
@@ -138,13 +140,50 @@ impl eframe::App for App {
                     self.radius = radius;
                 }
             });
+            ui.horizontal(|ui| {
+                let max_fov_deg = constellation::max_fov(self.radius, self.altitude).to_degrees();
+                // Re-clamp in case altitude/radius shrank since fov was last set
+                // (e.g. via the planet menu or altitude DragValue).
+                if self.fov > max_fov_deg {
+                    self.fov = max_fov_deg;
+                }
+                ui.label("FoV [°]: ").on_hover_text(format!(
+                    "Field of view in degrees (max {:.3}° at current altitude)",
+                    max_fov_deg
+                ));
+                ui.add(
+                    egui::DragValue::new(&mut self.fov)
+                        .speed(0.5)
+                        .range(0.0..=max_fov_deg),
+                );
+            });
 
             ui.separator();
+
+            let constellation = Constellation {
+                inclination: self.inclination.to_radians(),
+                satellites: self.satellites as u32,
+                planes: self.planes as u32,
+                altitude: self.altitude * 1000.0,
+                radius: self.radius * 1000.0,
+                mu: self.mu,
+                omega: self.omega.to_radians() / 3600.0,
+                fov: self.fov.to_radians(),
+            };
+
+            // plot the constellation
 
             ui.separator();
 
             ui.horizontal(|ui| {
-                ui.label("Maximum revisit time: 1.0 days");
+                match constellation.max_revisit_time() {
+                    Some(seconds) => ui.label(format!(
+                        "Maximum revisit time: {:.3} hours ({:.3} days)",
+                        seconds / 3600.0,
+                        seconds / 86400.0,
+                    )),
+                    None => ui.label("Maximum revisit time: N/A (invalid geometry or parameters)"),
+                };
             });
 
             ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
