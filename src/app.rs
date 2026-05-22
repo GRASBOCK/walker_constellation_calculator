@@ -160,6 +160,16 @@ impl eframe::App for App {
 
             ui.separator();
 
+            // input validation and clamping
+            self.inclination = self.inclination.clamp(0.0, 90.0);
+            self.altitude = self.altitude.max(0.0);
+            self.satellites = self.satellites.max(1.0).round();
+            self.planes = self.planes.max(1.0).round();
+            self.mu = self.mu.max(0.0);
+            self.omega = self.omega.max(0.0);
+            self.radius = self.radius.max(0.0);
+            self.fov = self.fov.max(0.0);
+
             let constellation = Constellation {
                 inclination: self.inclination.to_radians(),
                 satellites: self.satellites as u32,
