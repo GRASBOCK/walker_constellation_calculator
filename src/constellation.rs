@@ -132,27 +132,13 @@ impl Constellation {
     /// - Coverage edges are the two points on the planet's surface at
     ///   central angle σ from the sub-satellite point, perpendicular to
     ///   the ground-track velocity (left, right of motion).
-    pub fn revisit_time_simulation(&self, inp: SimulationInput) -> SimulationData {
+    pub fn simulation(&self, inp: SimulationInput) -> SimulationData {
         let sigma = self.coverage_half_angle();
-        let a = self.radius + self.altitude;
-        let n = 2.0 * PI / self.orbital_period(); // mean motion [rad/s]
-        let i = self.inclination;
 
-        const F: u32 = 0; // Walker phasing parameter (hardcoded)
-
-        let two_pi = 2.0 * PI;
         let total_sats = (self.satellites as usize) * (self.planes as usize);
         let total_time = inp.max_predicition_time + inp.timespan;
         let dt = inp.dt.max(f32::EPSILON);
         let n_steps = (total_time / dt).ceil() as usize + 1;
-
-        let d_raan = two_pi / self.planes.max(1) as f32;
-        let d_mean_in_plane = two_pi / self.satellites.max(1) as f32;
-        let d_mean_between_planes = if self.satellites > 0 && self.planes > 0 {
-            two_pi * F as f32 / (self.satellites * self.planes) as f32
-        } else {
-            0.0
-        };
 
         let mut groundtrack: Vec<Vec<(f32, f32)>> = (0..total_sats)
             .map(|_| Vec::with_capacity(n_steps))
@@ -165,48 +151,14 @@ impl Constellation {
         for step in 0..n_steps {
             let t = step as f32 * dt;
             time.push(t);
-            let theta = self.omega * t; // planet rotation angle at time t
 
             for p in 0..self.planes {
-                let raan = p as f32 * d_raan;
                 for s in 0..self.satellites {
                     let idx = (p * self.satellites + s) as usize;
-                    let nu = s as f32 * d_mean_in_plane + p as f32 * d_mean_between_planes + n * t;
 
-                    // perifocal frame (circular orbit, argument of periapsis = 0)
-                    let (sn, cn) = nu.sin_cos();
-                    let r_pf = [a * cn, a * sn, 0.0];
-                    let v_pf = [-a * n * sn, a * n * cn, 0.0];
-
-                    // rotate by inclination (about x), then RAAN (about z) -> ECI
-                    let r_eci = rot_z(rot_x(r_pf, i), raan);
-                    let v_eci = rot_z(rot_x(v_pf, i), raan);
-
-                    // ECI -> ECEF: rotate by -theta about z, then subtract
-                    // planet-rotation contribution from the velocity:
-                    //   v_ecef = R_z(-θ) v_eci - ω × r_ecef
-                    let r_ecef = rot_z(r_eci, -theta);
-                    let v_rot = rot_z(v_eci, -theta);
-                    let v_ecef = [
-                        v_rot[0] - (-self.omega * r_ecef[1]),
-                        v_rot[1] - (self.omega * r_ecef[0]),
-                        v_rot[2],
-                    ];
-
-                    // sub-satellite unit vector
-                    let r_hat = normalize(r_ecef);
-
-                    // ground-track tangent: project v into the local tangent plane
-                    let vr = dot(v_ecef, r_hat);
-                    let v_tan = [
-                        v_ecef[0] - vr * r_hat[0],
-                        v_ecef[1] - vr * r_hat[1],
-                        v_ecef[2] - vr * r_hat[2],
-                    ];
-                    let t_hat = normalize(v_tan);
-
-                    // cross-track unit vector (in tangent plane, right-hand of motion)
-                    let c_hat = normalize(cross(t_hat, r_hat));
+                    let state = self.sat_state_at(p, s, t);
+                    let r_hat = state.r_hat;
+                    let c_hat = state.c_hat;
 
                     // (lat, lon) of sub-satellite point
                     let sub_ll = to_lat_lon(r_hat);
@@ -235,25 +187,92 @@ impl Constellation {
             time,
         }
     }
+
+    /// State of one satellite at time `t`, in the planet-fixed (ECEF-like) frame.
+    ///
+    /// All vectors are in meters / dimensionless as noted. The triad
+    /// `(r_hat, t_hat, c_hat)` is the local nadir/along-track/cross-track
+    /// orthonormal basis at the satellite, with `c_hat = t_hat × r_hat`
+    /// pointing to the right of motion.
+    pub(crate) fn sat_state_at(&self, plane: u32, slot: u32, t: f32) -> SatState {
+        const F: u32 = 0; // Walker phasing parameter (hardcoded, matches simulation())
+
+        let two_pi = 2.0 * PI;
+        let a = self.radius + self.altitude;
+        let n = two_pi / self.orbital_period();
+        let i = self.inclination;
+
+        let d_raan = two_pi / self.planes.max(1) as f32;
+        let d_in_plane = two_pi / self.satellites.max(1) as f32;
+        let d_between = if self.satellites > 0 && self.planes > 0 {
+            two_pi * F as f32 / (self.satellites * self.planes) as f32
+        } else {
+            0.0
+        };
+
+        let raan = plane as f32 * d_raan;
+        let nu = slot as f32 * d_in_plane + plane as f32 * d_between + n * t;
+        let theta = self.omega * t;
+
+        let (sn, cn) = nu.sin_cos();
+        let r_pf = [a * cn, a * sn, 0.0];
+        let v_pf = [-a * n * sn, a * n * cn, 0.0];
+
+        let r_eci = rot_z(rot_x(r_pf, i), raan);
+        let v_eci = rot_z(rot_x(v_pf, i), raan);
+
+        let r_ecef = rot_z(r_eci, -theta);
+        let v_rot = rot_z(v_eci, -theta);
+        let v_ecef = [
+            v_rot[0] - (-self.omega * r_ecef[1]),
+            v_rot[1] - (self.omega * r_ecef[0]),
+            v_rot[2],
+        ];
+
+        let r_hat = normalize(r_ecef);
+        let vr = dot(v_ecef, r_hat);
+        let v_tan = [
+            v_ecef[0] - vr * r_hat[0],
+            v_ecef[1] - vr * r_hat[1],
+            v_ecef[2] - vr * r_hat[2],
+        ];
+        let t_hat = normalize(v_tan);
+        let c_hat = normalize(cross(t_hat, r_hat));
+
+        SatState {
+            r_ecef,
+            r_hat,
+            t_hat,
+            c_hat,
+        }
+    }
+}
+
+/// Position and local orthonormal triad of one satellite in the planet-fixed frame.
+pub(crate) struct SatState {
+    pub r_ecef: [f32; 3],
+    pub r_hat: [f32; 3],
+    pub t_hat: [f32; 3],
+    pub c_hat: [f32; 3],
 }
 
 // --- small vector helpers (3D, f32) -----------------------------------------
 
-fn rot_x(v: [f32; 3], a: f32) -> [f32; 3] {
+pub(crate) fn rot_x(v: [f32; 3], a: f32) -> [f32; 3] {
     let (s, c) = a.sin_cos();
     [v[0], c * v[1] - s * v[2], s * v[1] + c * v[2]]
 }
 
-fn rot_z(v: [f32; 3], a: f32) -> [f32; 3] {
+pub(crate) fn rot_z(v: [f32; 3], a: f32) -> [f32; 3] {
     let (s, c) = a.sin_cos();
     [c * v[0] - s * v[1], s * v[0] + c * v[1], v[2]]
 }
 
-fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
+pub(crate) fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
     a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 }
 
-fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+pub(crate) fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
     [
         a[1] * b[2] - a[2] * b[1],
         a[2] * b[0] - a[0] * b[2],
@@ -261,7 +280,7 @@ fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
     ]
 }
 
-fn normalize(v: [f32; 3]) -> [f32; 3] {
+pub(crate) fn normalize(v: [f32; 3]) -> [f32; 3] {
     let m = dot(v, v).sqrt();
     if m < f32::EPSILON {
         [0.0, 0.0, 0.0]
@@ -271,7 +290,7 @@ fn normalize(v: [f32; 3]) -> [f32; 3] {
 }
 
 /// Convert a unit vector (in a planet-fixed frame) to (lat, lon) in radians.
-fn to_lat_lon(u: [f32; 3]) -> (f32, f32) {
+pub(crate) fn to_lat_lon(u: [f32; 3]) -> (f32, f32) {
     let lat = u[2].clamp(-1.0, 1.0).asin();
     let lon = u[1].atan2(u[0]);
     (lat, lon)
@@ -303,7 +322,7 @@ mod tests {
             max_predicition_time: c.orbital_period(),
             dt: 60.0, // 1-minute samples
         };
-        let data = c.revisit_time_simulation(inp);
+        let data = c.simulation(inp);
 
         let total_sats = (c.satellites * c.planes) as usize;
         assert_eq!(data.groundtrack.len(), total_sats);
@@ -340,7 +359,7 @@ mod tests {
         };
         // Note: inclination = 0 makes effective_swath() undefined, but the
         // simulation itself doesn't depend on it.
-        let data = c.revisit_time_simulation(inp);
+        let data = c.simulation(inp);
         for track in &data.groundtrack {
             for (lat, _lon) in track {
                 assert!(
@@ -361,7 +380,7 @@ mod tests {
             max_predicition_time: c.orbital_period() * 0.25,
             dt: 120.0,
         };
-        let data = c.revisit_time_simulation(inp);
+        let data = c.simulation(inp);
 
         // For each sample, the angular distance from sub-sat to each edge
         // (computed on the unit sphere) should equal σ.

@@ -1,4 +1,5 @@
 use crate::constellation::{self, Constellation, SimulationInput};
+use crate::coverage::{CoverageMap, RasterizeOptions};
 
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -15,6 +16,27 @@ pub struct App {
     mu: f32,
     omega: f32,
     fov: f32,
+
+    // Simulation parameters (user-facing units: hours / seconds)
+    sim_timespan_h: f32,
+    sim_max_prediction_h: f32,
+    sim_dt_s: f32,
+
+    // Coverage map output size
+    coverage_width: usize,
+    coverage_height: usize,
+
+    // Cached rasterized texture (not persisted)
+    #[serde(skip)]
+    coverage_texture: Option<egui::TextureHandle>,
+    /// Maximum finite "time of first coverage" from the last computed map [s].
+    /// Acts as the simulated worst-case revisit time over the globe (excluding
+    /// pixels that were never covered).
+    #[serde(skip)]
+    coverage_max_time_s: Option<f32>,
+    /// Number of pixels in the last computed map that were never covered.
+    #[serde(skip)]
+    coverage_uncovered_pixels: Option<usize>,
 }
 
 impl Default for App {
@@ -30,6 +52,16 @@ impl Default for App {
             radius: 6378.1,
             omega: 360.0 / 24.0,
             fov: 20.0,
+
+            sim_timespan_h: 24.0,
+            sim_max_prediction_h: 72.0,
+            sim_dt_s: 60.0,
+
+            coverage_width: 720,
+            coverage_height: 360,
+            coverage_texture: None,
+            coverage_max_time_s: None,
+            coverage_uncovered_pixels: None,
         }
     }
 }
@@ -39,6 +71,7 @@ impl App {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         // This is also where you can customize the look and feel of egui using
         // `cc.egui_ctx.set_visuals` and `cc.egui_ctx.set_fonts`.
+        cc.egui_ctx.set_visuals(egui::Visuals::light());
 
         // Load previous app state (if any).
         // Note that you must enable the `persistence` feature for this to work.
@@ -180,8 +213,8 @@ impl eframe::App for App {
                 fov: self.fov.to_radians(),
             };
 
+            ui.label("Analytical Solution");
             ui.horizontal(|ui| {
-                ui.label("Analytical Solution");
                 match constellation.max_revisit_time() {
                     Some(seconds) => ui.label(format!(
                         "Maximum revisit time: {:.3} hours ({:.3} days)",
@@ -191,22 +224,138 @@ impl eframe::App for App {
                     None => ui.label("Maximum revisit time: N/A (invalid geometry or parameters)"),
                 };
             });
-
-            ui.label("Simulation");
-            // plot the constellation
 
             ui.separator();
+            ui.label("Simulation");
 
+            // input simulation parameters
             ui.horizontal(|ui| {
-                match constellation.max_revisit_time() {
-                    Some(seconds) => ui.label(format!(
-                        "Maximum revisit time: {:.3} hours ({:.3} days)",
-                        seconds / 3600.0,
-                        seconds / 86400.0,
-                    )),
-                    None => ui.label("Maximum revisit time: N/A (invalid geometry or parameters)"),
-                };
+                ui.label("Timespan [h]:").on_hover_text(
+                    "Length of the visible time window (rolling history shown in plots)",
+                );
+                ui.add(
+                    egui::DragValue::new(&mut self.sim_timespan_h)
+                        .speed(0.1)
+                        .range(0.0..=f32::INFINITY),
+                );
+                ui.label("Prediction [h]:").on_hover_text(
+                    "How far into the future the simulation runs beyond the visible window",
+                );
+                ui.add(
+                    egui::DragValue::new(&mut self.sim_max_prediction_h)
+                        .speed(0.1)
+                        .range(0.0..=f32::INFINITY),
+                );
+                ui.label("dt [s]:")
+                    .on_hover_text("Simulation sample step in seconds");
+                ui.add(
+                    egui::DragValue::new(&mut self.sim_dt_s)
+                        .speed(1.0)
+                        .range(0.001..=f32::INFINITY),
+                );
             });
+
+            // input validation
+            self.sim_timespan_h = self.sim_timespan_h.max(0.0);
+            self.sim_max_prediction_h = self.sim_max_prediction_h.max(0.0);
+            self.sim_dt_s = self.sim_dt_s.max(0.001);
+
+            let inp = SimulationInput {
+                timespan: self.sim_timespan_h * 3600.0,
+                max_predicition_time: self.sim_max_prediction_h * 3600.0,
+                dt: self.sim_dt_s,
+            };
+            let total_sim_time = inp.timespan + inp.max_predicition_time;
+
+            // -- Coverage map ------------------------------------------------
+            ui.horizontal(|ui| {
+                if ui.button("Compute coverage map").clicked() {
+                    let t_end = total_sim_time;
+                    let opts = RasterizeOptions {
+                        width: self.coverage_width,
+                        height: self.coverage_height,
+                        dt_rast: None,
+                    };
+
+                    let mut combined = CoverageMap::new(self.coverage_width, self.coverage_height);
+                    for p in 0..constellation.planes {
+                        for s in 0..constellation.satellites {
+                            let m = CoverageMap::from_satellite(
+                                &constellation,
+                                p,
+                                s,
+                                0.0,
+                                t_end,
+                                &opts,
+                            );
+                            combined.combine_min(&m);
+                        }
+                    }
+
+                    let img = coverage_to_color_image(&combined);
+                    self.coverage_texture = Some(ui.ctx().load_texture(
+                        "coverage_map",
+                        img,
+                        egui::TextureOptions::NEAREST,
+                    ));
+
+                    // Stats from the freshly computed map.
+                    let mut t_max: f32 = 0.0;
+                    let mut n_uncov: usize = 0;
+                    let mut any_finite = false;
+                    for v in &combined.data {
+                        if v.is_finite() {
+                            any_finite = true;
+                            if *v > t_max {
+                                t_max = *v;
+                            }
+                        } else {
+                            n_uncov += 1;
+                        }
+                    }
+                    self.coverage_max_time_s = if any_finite { Some(t_max) } else { None };
+                    self.coverage_uncovered_pixels = Some(n_uncov);
+                }
+                ui.label(format!(
+                    "Map size: {}×{}",
+                    self.coverage_width, self.coverage_height
+                ))
+                .on_hover_text("Equirectangular projection (full planet)");
+            });
+
+            // Simulated max revisit (max time-of-first-coverage over all
+            // covered pixels), plus a count of pixels never covered.
+            ui.horizontal(|ui| {
+                ui.label("Simulated max revisit:");
+                match self.coverage_max_time_s {
+                    Some(seconds) => {
+                        ui.label(format!(
+                            "{:.3} h ({:.3} days)",
+                            seconds / 3600.0,
+                            seconds / 86400.0,
+                        ))
+                        .on_hover_text(
+                            "Worst-case time-of-first-coverage across all covered pixels.\n\
+                             Equals the longest wait any covered point on the globe\n\
+                             had to endure before being seen for the first time.",
+                        );
+                    }
+                    None => {
+                        ui.label("(no map computed yet)");
+                    }
+                }
+            });
+
+            if let Some(tex) = &self.coverage_texture {
+                let avail = ui.available_width();
+                let aspect = tex.size_vec2().x / tex.size_vec2().y;
+                let w = avail.min(tex.size_vec2().x);
+                let h = w / aspect;
+                ui.add(
+                    egui::Image::from_texture((tex.id(), egui::vec2(w, h)))
+                        .fit_to_exact_size(egui::vec2(w, h)),
+                );
+            }
 
             ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
                 ui.horizontal(|ui| {
@@ -230,4 +379,54 @@ impl eframe::App for App {
             });
         });
     }
+}
+
+// ----- Coverage colormap & image conversion ------------------------------
+
+/// Map a normalized scalar `t ∈ [0, 1]` to a viridis-like RGBA colour.
+fn viridis_like(t: f32) -> [u8; 4] {
+    // 5 control points sampled along the viridis colormap.
+    const STOPS: [[f32; 3]; 5] = [
+        [68.0, 1.0, 84.0],
+        [59.0, 82.0, 139.0],
+        [33.0, 145.0, 140.0],
+        [94.0, 201.0, 98.0],
+        [253.0, 231.0, 37.0],
+    ];
+    let n = STOPS.len() - 1;
+    let f = (t.clamp(0.0, 1.0) * n as f32).min(n as f32);
+    let i = (f as usize).min(n - 1);
+    let u = f - i as f32;
+    let a = STOPS[i];
+    let b = STOPS[i + 1];
+    [
+        (a[0] * (1.0 - u) + b[0] * u) as u8,
+        (a[1] * (1.0 - u) + b[1] * u) as u8,
+        (a[2] * (1.0 - u) + b[2] * u) as u8,
+        255,
+    ]
+}
+
+/// Render a [`CoverageMap`] as an egui `ColorImage`. Finite pixels are mapped
+/// through a viridis-like gradient over `[0, t_max]`; pixels never covered are
+/// drawn as dark grey.
+fn coverage_to_color_image(map: &CoverageMap) -> egui::ColorImage {
+    let mut t_max: f32 = 0.0;
+    for v in &map.data {
+        if v.is_finite() && *v > t_max {
+            t_max = *v;
+        }
+    }
+    let inv = if t_max > 0.0 { 1.0 / t_max } else { 1.0 };
+
+    let mut bytes = Vec::with_capacity(map.width * map.height * 4);
+    for v in &map.data {
+        let rgba = if v.is_finite() {
+            viridis_like(*v * inv)
+        } else {
+            [25, 25, 28, 255]
+        };
+        bytes.extend_from_slice(&rgba);
+    }
+    egui::ColorImage::from_rgba_unmultiplied([map.width, map.height], &bytes)
 }
