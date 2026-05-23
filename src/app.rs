@@ -26,7 +26,7 @@ impl Default for App {
             satellites: 16.0,
             planes: 2.0,
             altitude: 500.0,
-            mu: 3.986004418E14,
+            mu: 3.986_004_5E14,
             radius: 6378.1,
             omega: 360.0 / 24.0,
             fov: 20.0,
@@ -109,7 +109,7 @@ impl eframe::App for App {
                         ui.close();
                     }
                     if ui.button("Earth").clicked() {
-                        selected_planet = Some(("Earth", 3.986004418E14, 15.0, 6378.1));
+                        selected_planet = Some(("Earth", 3.986_004_5E14, 15.0, 6378.1));
                         ui.close();
                     }
                     if ui.button("Mars").clicked() {
@@ -117,11 +117,11 @@ impl eframe::App for App {
                         ui.close();
                     }
                     if ui.button("Jupiter").clicked() {
-                        selected_planet = Some(("Jupiter", 126686534E9, 0.6330708, 69911.0));
+                        selected_planet = Some(("Jupiter", 1.266_865_4E17, 0.6330708, 69911.0));
                         ui.close();
                     }
                     if ui.button("Saturn").clicked() {
-                        selected_planet = Some(("Saturn", 37931187E9, 0.589644, 58232.0));
+                        selected_planet = Some(("Saturn", 3.793_119E16, 0.589644, 58232.0));
                         ui.close();
                     }
                     if ui.button("Uranus").clicked() {
@@ -148,8 +148,7 @@ impl eframe::App for App {
                     self.fov = max_fov_deg;
                 }
                 ui.label("FoV [°]: ").on_hover_text(format!(
-                    "Field of view in degrees (max {:.3}° at current altitude)",
-                    max_fov_deg
+                    "Field of view in degrees (max {max_fov_deg:.3}° at current altitude)"
                 ));
                 ui.add(
                     egui::DragValue::new(&mut self.fov)
