@@ -1,4 +1,4 @@
-use crate::constellation::{self, Constellation};
+use crate::constellation::{self, Constellation, SimulationInput};
 
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -180,6 +180,19 @@ impl eframe::App for App {
                 fov: self.fov.to_radians(),
             };
 
+            ui.horizontal(|ui| {
+                ui.label("Analytical Solution");
+                match constellation.max_revisit_time() {
+                    Some(seconds) => ui.label(format!(
+                        "Maximum revisit time: {:.3} hours ({:.3} days)",
+                        seconds / 3600.0,
+                        seconds / 86400.0,
+                    )),
+                    None => ui.label("Maximum revisit time: N/A (invalid geometry or parameters)"),
+                };
+            });
+
+            ui.label("Simulation");
             // plot the constellation
 
             ui.separator();
