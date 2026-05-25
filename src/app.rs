@@ -18,8 +18,7 @@ pub struct App {
     fov: f32,
 
     // Simulation parameters (user-facing units: hours / seconds)
-    sim_timespan_h: f32,
-    sim_max_prediction_h: f32,
+    sim_duration_h: f32,
     sim_dt_s: f32,
 
     // Coverage map output size
@@ -53,8 +52,7 @@ impl Default for App {
             omega: 360.0 / 24.0,
             fov: 20.0,
 
-            sim_timespan_h: 24.0,
-            sim_max_prediction_h: 72.0,
+            sim_duration_h: 96.0,
             sim_dt_s: 60.0,
 
             coverage_width: 720,
@@ -239,19 +237,10 @@ impl eframe::App for App {
 
             // input simulation parameters
             ui.horizontal(|ui| {
-                ui.label("Timespan [h]:").on_hover_text(
-                    "Length of the visible time window (rolling history shown in plots)",
-                );
+                ui.label("Duration [h]:")
+                    .on_hover_text("Total simulated duration, starting at t = 0");
                 ui.add(
-                    egui::DragValue::new(&mut self.sim_timespan_h)
-                        .speed(0.1)
-                        .range(0.0..=f32::INFINITY),
-                );
-                ui.label("Prediction [h]:").on_hover_text(
-                    "How far into the future the simulation runs beyond the visible window",
-                );
-                ui.add(
-                    egui::DragValue::new(&mut self.sim_max_prediction_h)
+                    egui::DragValue::new(&mut self.sim_duration_h)
                         .speed(0.1)
                         .range(0.0..=f32::INFINITY),
                 );
@@ -265,16 +254,14 @@ impl eframe::App for App {
             });
 
             // input validation
-            self.sim_timespan_h = self.sim_timespan_h.max(0.0);
-            self.sim_max_prediction_h = self.sim_max_prediction_h.max(0.0);
+            self.sim_duration_h = self.sim_duration_h.max(0.0);
             self.sim_dt_s = self.sim_dt_s.max(0.001);
 
             let inp = SimulationInput {
-                timespan: self.sim_timespan_h * 3600.0,
-                max_predicition_time: self.sim_max_prediction_h * 3600.0,
+                duration: self.sim_duration_h * 3600.0,
                 dt: self.sim_dt_s,
             };
-            let total_sim_time = inp.timespan + inp.max_predicition_time;
+            let total_sim_time = inp.duration;
 
             // -- Coverage map ------------------------------------------------
             ui.horizontal(|ui| {

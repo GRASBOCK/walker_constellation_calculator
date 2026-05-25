@@ -41,10 +41,8 @@ pub struct Constellation {
 }
 
 pub struct SimulationInput {
-    /// the timespan that the user can see [s]
-    pub timespan: f32,
-    /// how far into the future the prediction will run [s]
-    pub max_predicition_time: f32,
+    /// total simulated duration starting at t = 0 [s]
+    pub duration: f32,
     /// sample rate in seconds
     pub dt: f32,
 }
@@ -118,7 +116,7 @@ impl Constellation {
 
     /// Simulate satellite ground tracks and instantaneous coverage edges
     /// in a planet-fixed (ECEF-like) frame, sampled at `inp.dt` over
-    /// `[0, inp.max_predicition_time + inp.timespan]`.
+    /// `[0, inp.duration]`.
     ///
     /// Assumptions:
     /// - Circular orbits at radius `a = R + h`, mean motion `n = √(μ/a³)`.
@@ -136,7 +134,7 @@ impl Constellation {
         let sigma = self.coverage_half_angle();
 
         let total_sats = (self.satellites as usize) * (self.planes as usize);
-        let total_time = inp.max_predicition_time + inp.timespan;
+        let total_time = inp.duration.max(0.0);
         let dt = inp.dt.max(f32::EPSILON);
         let n_steps = (total_time / dt).ceil() as usize + 1;
 
@@ -318,8 +316,7 @@ mod tests {
     fn simulation_smoke_basic_shape_and_bounds() {
         let c = earth_like(53.0);
         let inp = SimulationInput {
-            timespan: 0.0,
-            max_predicition_time: c.orbital_period(),
+            duration: c.orbital_period(),
             dt: 60.0, // 1-minute samples
         };
         let data = c.simulation(inp);
@@ -353,8 +350,7 @@ mod tests {
             ..earth_like(0.0)
         };
         let inp = SimulationInput {
-            timespan: 0.0,
-            max_predicition_time: c.orbital_period(),
+            duration: c.orbital_period(),
             dt: 30.0,
         };
         // Note: inclination = 0 makes effective_swath() undefined, but the
@@ -376,8 +372,7 @@ mod tests {
         let c = earth_like(53.0);
         let sigma = c.coverage_half_angle();
         let inp = SimulationInput {
-            timespan: 0.0,
-            max_predicition_time: c.orbital_period() * 0.25,
+            duration: c.orbital_period() * 0.25,
             dt: 120.0,
         };
         let data = c.simulation(inp);
