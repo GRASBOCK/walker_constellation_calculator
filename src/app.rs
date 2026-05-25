@@ -190,8 +190,6 @@ impl eframe::App for App {
                 );
             });
 
-            ui.separator();
-
             // input validation and clamping
             self.inclination = self.inclination.clamp(0.0, 90.0);
             self.altitude = self.altitude.max(0.0);
@@ -212,6 +210,17 @@ impl eframe::App for App {
                 omega: self.omega.to_radians() / 3600.0,
                 fov: self.fov.to_radians(),
             };
+
+            match constellation.effective_swath() {
+                Some(radians) => ui.label(format!("Effective Swath {:.2}°", radians.to_degrees())),
+                None => ui.label("Effective Swath: N/A (invalid geometry or parameters)"),
+            };
+            ui.label(format!(
+                "Orbital Period {:.2} h",
+                constellation.orbital_period() / 3600.0
+            ));
+
+            ui.separator();
 
             ui.label("Analytical Solution");
             ui.horizontal(|ui| {
@@ -316,11 +325,21 @@ impl eframe::App for App {
                     self.coverage_max_time_s = if any_finite { Some(t_max) } else { None };
                     self.coverage_uncovered_pixels = Some(n_uncov);
                 }
-                ui.label(format!(
-                    "Map size: {}×{}",
-                    self.coverage_width, self.coverage_height
-                ))
-                .on_hover_text("Equirectangular projection (full planet)");
+                ui.label("Width [px]:").on_hover_text(
+                    "Rasterization width of the coverage map. Height is locked to width/2\n\
+                     to keep the equirectangular projection's 2:1 aspect ratio.\n\
+                     Takes effect on the next ‘Compute coverage map’ click.",
+                );
+                ui.add(
+                    egui::DragValue::new(&mut self.coverage_width)
+                        .speed(8.0)
+                        .range(16..=8192),
+                );
+                // Enforce 2:1 aspect on every frame so the displayed value
+                // matches what the next compute will use.
+                self.coverage_height = (self.coverage_width / 2).max(8);
+                ui.label(format!("× {} px", self.coverage_height))
+                    .on_hover_text("Derived height = width / 2");
             });
 
             // Simulated max revisit (max time-of-first-coverage over all
