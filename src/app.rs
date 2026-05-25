@@ -288,27 +288,53 @@ impl eframe::App for App {
                         }
                     }
 
-                    let img = coverage_to_color_image(&combined);
+                    // Stats from the freshly computed map.
+                    //
+                    // Trim the outer 5% of the covered latitude band
+                    // (±(i + σ)) when picking the colour-scale maximum and
+                    // the displayed "max revisit". The very edge of the band
+                    // is dominated by short grazing visits at the inclination
+                    // limit and would otherwise saturate the colormap.
+                    const TRIM_FRAC: f32 = 0.05;
+                    let sigma = constellation.coverage_half_angle();
+                    let lat_band = constellation.inclination + sigma;
+                    let lat_keep = (lat_band * (1.0 - TRIM_FRAC)).min(0.5 * std::f32::consts::PI);
+                    let h_f = combined.height as f32;
+                    let pi = std::f32::consts::PI;
+                    let y_lo = (((0.5 * pi - lat_keep) / pi * h_f).floor().max(0.0)) as usize;
+                    let y_hi =
+                        ((((0.5 * pi + lat_keep) / pi * h_f).ceil()) as usize).min(combined.height);
+                    let (y_lo, y_hi) = if y_lo < y_hi {
+                        (y_lo, y_hi)
+                    } else {
+                        (0, combined.height) // degenerate — fall back to full map
+                    };
+
+                    let mut t_max: f32 = 0.0;
+                    let mut any_finite = false;
+                    for y in y_lo..y_hi {
+                        let row = y * combined.width;
+                        for x in 0..combined.width {
+                            let v = combined.data[row + x];
+                            if v.is_finite() {
+                                any_finite = true;
+                                if v > t_max {
+                                    t_max = v;
+                                }
+                            }
+                        }
+                    }
+
+                    // Uncovered pixel count is over the full map (informational).
+                    let n_uncov = combined.data.iter().filter(|v| !v.is_finite()).count();
+
+                    let img =
+                        coverage_to_color_image(&combined, if any_finite { t_max } else { 1.0 });
                     self.coverage_texture = Some(ui.ctx().load_texture(
                         "coverage_map",
                         img,
                         egui::TextureOptions::NEAREST,
                     ));
-
-                    // Stats from the freshly computed map.
-                    let mut t_max: f32 = 0.0;
-                    let mut n_uncov: usize = 0;
-                    let mut any_finite = false;
-                    for v in &combined.data {
-                        if v.is_finite() {
-                            any_finite = true;
-                            if *v > t_max {
-                                t_max = *v;
-                            }
-                        } else {
-                            n_uncov += 1;
-                        }
-                    }
                     self.coverage_max_time_s = if any_finite { Some(t_max) } else { None };
                     self.coverage_uncovered_pixels = Some(n_uncov);
                 }
@@ -341,9 +367,10 @@ impl eframe::App for App {
                             seconds / 86400.0,
                         ))
                         .on_hover_text(
-                            "Worst-case time-of-first-coverage across all covered pixels.\n\
-                             Equals the longest wait any covered point on the globe\n\
-                             had to endure before being seen for the first time.",
+                            "Worst-case time-of-first-coverage across covered pixels,\n\
+                             excluding the outer 5% of the covered latitude band\n\
+                             (±(i+σ)) where grazing visits at the inclination limit\n\
+                             would otherwise dominate.",
                         );
                     }
                     None => {
@@ -414,15 +441,11 @@ fn viridis_like(t: f32) -> [u8; 4] {
 }
 
 /// Render a [`CoverageMap`] as an egui `ColorImage`. Finite pixels are mapped
-/// through a viridis-like gradient over `[0, t_max]`; pixels never covered are
-/// drawn as dark grey.
-fn coverage_to_color_image(map: &CoverageMap) -> egui::ColorImage {
-    let mut t_max: f32 = 0.0;
-    for v in &map.data {
-        if v.is_finite() && *v > t_max {
-            t_max = *v;
-        }
-    }
+/// through a viridis-like gradient over `[0, t_max]` (values above `t_max` are
+/// clamped to the top of the gradient); pixels never covered are drawn as dark
+/// grey. `t_max` is provided by the caller so the colour scale can ignore
+/// edge-band outliers.
+fn coverage_to_color_image(map: &CoverageMap, t_max: f32) -> egui::ColorImage {
     let inv = if t_max > 0.0 { 1.0 / t_max } else { 1.0 };
 
     let mut bytes = Vec::with_capacity(map.width * map.height * 4);
