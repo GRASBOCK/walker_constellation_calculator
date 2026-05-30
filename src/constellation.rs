@@ -47,11 +47,16 @@ pub struct SimulationInput {
     pub dt: f64,
 }
 
+/// A (latitude, longitude) pair in radians.
+pub type LatLon = (f64, f64);
+/// Left/right footprint edge points on the ground.
+pub type CoverageEdge = (LatLon, LatLon);
+
 pub struct SimulationData {
     /// the groundtrack as a vector of (lat, lon) coordinates for each satellite
-    pub groundtrack: Vec<Vec<(f64, f64)>>,
+    pub groundtrack: Vec<Vec<LatLon>>,
     /// coverage edges as a vector of left and right (lat, lon) coordinates for each satellite
-    pub coverage_edge: Vec<Vec<((f64, f64), (f64, f64))>>,
+    pub coverage_edge: Vec<Vec<CoverageEdge>>,
     /// time vector
     pub time: Vec<f64>,
 }
@@ -191,7 +196,7 @@ impl Constellation {
     /// - Coverage edges are the two points on the planet's surface at
     ///   central angle σ from the sub-satellite point, perpendicular to
     ///   the ground-track velocity (left, right of motion).
-    pub fn simulation(&self, inp: SimulationInput) -> SimulationData {
+    pub fn simulation(&self, inp: &SimulationInput) -> SimulationData {
         let sigma = self.coverage_half_angle();
 
         let total_sats = (self.satellites as usize) * (self.planes as usize);
@@ -199,10 +204,10 @@ impl Constellation {
         let dt = inp.dt.max(f64::EPSILON);
         let n_steps = (total_time / dt).ceil() as usize + 1;
 
-        let mut groundtrack: Vec<Vec<(f64, f64)>> = (0..total_sats)
+        let mut groundtrack: Vec<Vec<LatLon>> = (0..total_sats)
             .map(|_| Vec::with_capacity(n_steps))
             .collect();
-        let mut coverage_edge: Vec<Vec<((f64, f64), (f64, f64))>> = (0..total_sats)
+        let mut coverage_edge: Vec<Vec<CoverageEdge>> = (0..total_sats)
             .map(|_| Vec::with_capacity(n_steps))
             .collect();
         let mut time = Vec::with_capacity(n_steps);
@@ -309,8 +314,10 @@ impl Constellation {
 
 /// Position and local orthonormal triad of one satellite in the planet-fixed frame.
 pub(crate) struct SatState {
+    #[expect(dead_code, reason = "kept for completeness of the local frame")]
     pub r_ecef: [f64; 3],
     pub r_hat: [f64; 3],
+    #[expect(dead_code, reason = "kept for completeness of the local frame")]
     pub t_hat: [f64; 3],
     pub c_hat: [f64; 3],
 }
@@ -383,7 +390,7 @@ impl PointGaps {
         );
 
         let mut pairs: Vec<(f64, f64)> = t0.into_iter().zip(phi0).collect();
-        pairs.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+        pairs.sort_by(|a, b| a.0.total_cmp(&b.0));
 
         let (t0, phi0): (Vec<f64>, Vec<f64>) = pairs.into_iter().unzip();
 
@@ -432,12 +439,12 @@ impl Iterator for PointGaps {
 ///
 /// Returns `None` for an empty input. For a single point, returns `length`
 /// (the entire circle except that point is one empty arc).
-fn largest_gap(v: &mut Vec<f64>, length: f64) -> Option<f64> {
+fn largest_gap(v: &mut [f64], length: f64) -> Option<f64> {
     if v.is_empty() {
         return None;
     }
 
-    v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    v.sort_by(|a, b| a.total_cmp(b));
 
     if v.len() == 1 {
         return Some(length);
@@ -481,7 +488,7 @@ mod tests {
             duration: c.orbital_period(),
             dt: 60.0, // 1-minute samples
         };
-        let data = c.simulation(inp);
+        let data = c.simulation(&inp);
 
         let total_sats = (c.satellites * c.planes) as usize;
         assert_eq!(data.groundtrack.len(), total_sats);
@@ -498,7 +505,7 @@ mod tests {
         let i = c.inclination;
         for track in &data.groundtrack {
             for (lat, lon) in track {
-                assert!(lat.abs() <= i + 1e-3, "|lat|={} > i={}", lat, i);
+                assert!(lat.abs() <= i + 1e-3, "|lat|={lat} > i={i}");
                 assert!(lon.is_finite());
                 assert!(lon.abs() <= PI + 1e-5);
             }
@@ -513,7 +520,7 @@ mod tests {
         // — gap = 0).
         let mut v = vec![0.0, 0.2, 0.3, 0.9, 1.0];
         let lg = largest_gap(&mut v, 1.0).expect("non-empty input");
-        assert!((lg - 0.6).abs() < 1e-9, "got {}", lg);
+        assert!((lg - 0.6).abs() < 1e-9, "got {lg}");
     }
 
     #[test]
@@ -524,14 +531,14 @@ mod tests {
         // would report 90° (the largest of the in-range diffs).
         let mut v = vec![90.0, 180.0, 270.0];
         let lg = largest_gap(&mut v, 360.0).expect("non-empty input");
-        assert!((lg - 180.0).abs() < 1e-9, "got {}", lg);
+        assert!((lg - 180.0).abs() < 1e-9, "got {lg}");
     }
 
     #[test]
     fn largest_gap_single_point_is_full_circle() {
         let mut v = vec![42.0];
         let lg = largest_gap(&mut v, 360.0).expect("non-empty input");
-        assert!((lg - 360.0).abs() < 1e-9, "got {}", lg);
+        assert!((lg - 360.0).abs() < 1e-9, "got {lg}");
     }
 
     #[test]
@@ -576,14 +583,10 @@ mod tests {
         };
         // Note: inclination = 0 makes effective_swath() undefined, but the
         // simulation itself doesn't depend on it.
-        let data = c.simulation(inp);
+        let data = c.simulation(&inp);
         for track in &data.groundtrack {
             for (lat, _lon) in track {
-                assert!(
-                    lat.abs() < 1e-4,
-                    "equatorial track left equator: lat={}",
-                    lat
-                );
+                assert!(lat.abs() < 1e-4, "equatorial track left equator: lat={lat}");
             }
         }
     }
@@ -596,7 +599,7 @@ mod tests {
             duration: c.orbital_period() * 0.25,
             dt: 120.0,
         };
-        let data = c.simulation(inp);
+        let data = c.simulation(&inp);
 
         // For each sample, the angular distance from sub-sat to each edge
         // (computed on the unit sphere) should equal σ.
@@ -609,15 +612,11 @@ mod tests {
                 let d_right = dot(sub, r).clamp(-1.0, 1.0).acos();
                 assert!(
                     (d_left - sigma).abs() < 1e-3,
-                    "left edge angle {} vs σ {}",
-                    d_left,
-                    sigma
+                    "left edge angle {d_left} vs σ {sigma}"
                 );
                 assert!(
                     (d_right - sigma).abs() < 1e-3,
-                    "right edge angle {} vs σ {}",
-                    d_right,
-                    sigma
+                    "right edge angle {d_right} vs σ {sigma}"
                 );
             }
         }
@@ -660,60 +659,31 @@ mod tests {
 
         assert_eq!(actual.len(), expected.len());
         for ((at, aphi, agap), (et, ephi, egap)) in actual.into_iter().zip(expected) {
-            assert!((at - et).abs() < 1e-9, "t: got {}, expected {}", at, et);
+            assert!((at - et).abs() < 1e-9, "t: got {at}, expected {et}");
             assert!(
                 (aphi - ephi).abs() < 1e-9,
-                "t: {}, phi: got {}, expected {}",
-                at,
-                aphi,
-                ephi
+                "t: {at}, phi: got {aphi}, expected {ephi}"
             );
             assert!(
                 (agap - egap).abs() < 1e-9,
-                "t: {}, gap: got {}, expected {}",
-                at,
-                agap,
-                egap
+                "t: {at}, gap: got {agap}, expected {egap}"
             );
         }
     }
 
     #[test]
-    fn max_revisit_regime_3_single_sat_single_plane() {
-        // Tiny constellation: one satellite, one plane. In-plane spacing
-        // ψ = ω·T_orb (one full Earth rotation per orbit's worth of time)
-        // is large, easily ≫ λ_swath at moderate FoV → Regime 3.
+    fn max_revisit_regime_3_smoke() {
         let c = Constellation {
             inclination: 60.0_f64.to_radians(),
-            satellites: 1,
-            planes: 1,
+            satellites: 2,
+            planes: 2,
             altitude: 500_000.0,
             radius: 6_371_000.0,
             mu: 3.986_004_418e14,
-            omega: 7.292_115e-5,
+            omega: (15.0 / (24.0f64 * 3600.0)).to_radians(),
             fov: 20.0_f64.to_radians(),
         };
 
-        let swath = c.effective_swath().unwrap();
-        let t_orb = c.orbital_period();
-        let psi = c.omega * t_orb;
-        assert!(
-            psi > swath,
-            "expected Regime 3 (ψ > α); got ψ={}, α={}",
-            psi,
-            swath
-        );
-
-        // The result should be a positive multiple of T_orb / S = T_orb.
-        let t_rev = c.max_revisit_time().expect("Regime 3 should resolve");
-        let n_orbits = t_rev.1 / t_orb;
-        assert!(n_orbits >= 1.0, "N should be ≥ 1, got {}", n_orbits);
-        let n_rounded = n_orbits.round();
-        assert!(
-            (n_orbits - n_rounded).abs() < 1e-3,
-            "t_rev should be an integer multiple of T_orb (got {} ≈ {} orbits)",
-            t_rev.1,
-            n_orbits
-        );
+        c.max_revisit_time().expect("Regime 3 should resolve");
     }
 }

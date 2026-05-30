@@ -50,8 +50,8 @@ impl CoverageMap {
     /// Element-wise minimum. Used to fold N per-satellite maps into a
     /// single constellation-wide "earliest any satellite covered this pixel" map.
     pub fn combine_min(&mut self, other: &Self) {
-        assert_eq!(self.width, other.width);
-        assert_eq!(self.height, other.height);
+        assert_eq!(self.width, other.width, "width mismatch");
+        assert_eq!(self.height, other.height, "height mismatch");
         for (a, b) in self.data.iter_mut().zip(&other.data) {
             if *b < *a {
                 *a = *b;
@@ -61,6 +61,10 @@ impl CoverageMap {
 
     /// Rasterize the coverage of one satellite over `[t_start, t_end]` by
     /// supersampling the spherical-cap footprint.
+    #[expect(
+        clippy::cast_possible_wrap,
+        reason = "pixel coordinates are well within i64 range"
+    )]
     pub fn from_satellite(
         c: &Constellation,
         plane: u32,
@@ -72,7 +76,7 @@ impl CoverageMap {
         let mut map = Self::new(opts.width, opts.height);
 
         let sigma = c.coverage_half_angle();
-        if !(sigma > 0.0) || !(t_end > t_start) || opts.width == 0 || opts.height == 0 {
+        if !(sigma > 0.0 && t_end > t_start) || opts.width == 0 || opts.height == 0 {
             return map;
         }
 
@@ -242,9 +246,7 @@ mod tests {
             if a.is_finite() {
                 assert!(
                     b.is_finite() && *b <= *a + 1e-3,
-                    "fine map missing/later: coarse={} fine={}",
-                    a,
-                    b
+                    "fine map missing/later: coarse={a} fine={b}"
                 );
             }
         }
@@ -254,6 +256,10 @@ mod tests {
     /// time iff the angular distance from the pixel to the sub-sat point is
     /// `≤ σ`. Using the same `dt` as the rasterizer isolates geometry from
     /// temporal aliasing.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "ground-truth helper takes the full sample parameters explicitly"
+    )]
     fn brute_force_covered(
         c: &Constellation,
         plane: u32,
@@ -379,8 +385,7 @@ mod tests {
         for x in 0..map.width {
             assert!(
                 map.data[x].is_finite(),
-                "pole-row pixel x={} not covered by polar orbit",
-                x
+                "pole-row pixel x={x} not covered by polar orbit"
             );
         }
     }
