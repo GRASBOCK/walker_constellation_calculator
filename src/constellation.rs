@@ -126,7 +126,6 @@ impl Constellation {
             let mut t0 = Vec::with_capacity((self.satellites * self.planes) as usize);
             let mut phi0 = Vec::with_capacity(t0.capacity());
 
-            let half_orbit = 0.5 * t_orb;
             let s = self.satellites as f64;
             let p = self.planes as f64;
             let f = 0.0_f64; // Walker phasing parameter F (currently hardcoded to match simulation())
@@ -143,72 +142,23 @@ impl Constellation {
 
                     // Initial time offset:
                     // t₀(i,j) = T_orb/2 - (T_orb/S · i + T_orb/(S·P) · F · i · j) mod (T_orb/2)
-                    let phase_time = ((t_orb / s) * i_f + (t_orb / (s * p)) * f * i_f * j_f)
-                        .rem_euclid(half_orbit);
-                    let t_offset = (half_orbit - phase_time).rem_euclid(half_orbit);
+                    let phase_time =
+                        ((t_orb / s) * i_f + (t_orb / (s * p)) * f * i_f * j_f).rem_euclid(t_orb);
+                    let t_offset = (t_orb - phase_time).rem_euclid(t_orb);
 
                     phi0.push(phi_offset.rem_euclid(2.0 * PI));
                     t0.push(t_offset);
                 }
             }
 
-            let pg = PointGaps::new(
-                2.0 * PI,
-                t0,
-                phi0,
-                t_orb / 2.0,
-                t_orb / 2.0 * self.omega + PI / 2.0,
-            );
-            dbg!(&pg);
+            let pg = PointGaps::new(2.0 * PI, t0, phi0, t_orb, 2.0 * PI - t_orb * self.omega);
 
-            let samples: Vec<Gap> = pg.take(1000).collect();
-            let t_full_coverage = if let Some(g) = samples.iter().find(|g| g.largest_gap < swath) {
-                (String::from("light simulation"), g.new_t)
-            } else {
-                let n = samples.len();
-                if n < 2 {
-                    return None;
+            for g in pg.take(1000) {
+                if g.largest_gap < swath {
+                    return Some((String::from("light simulation"), g.new_t));
                 }
-                println!("samples");
-                for (i, g) in samples.iter().enumerate() {
-                    println!(
-                        "i = {}, t = {}, phi = {}, largest_gap = {}",
-                        &i,
-                        g.new_t,
-                        g.new_phi.to_degrees(),
-                        g.largest_gap
-                    );
-                }
-
-                let mean_t = samples.iter().map(|g| g.new_t).sum::<f64>() / n as f64;
-                let mean_gap = samples.iter().map(|g| g.largest_gap).sum::<f64>() / n as f64;
-
-                let mut s_tt = 0.0;
-                let mut s_tg = 0.0;
-                for g in &samples {
-                    let dt = g.new_t - mean_t;
-                    let dg = g.largest_gap - mean_gap;
-                    s_tt += dt * dt;
-                    s_tg += dt * dg;
-                }
-
-                if s_tt.abs() < f64::EPSILON {
-                    return None;
-                }
-
-                let slope = s_tg / s_tt;
-                if slope >= 0.0 {
-                    return None;
-                }
-
-                let intercept = mean_gap - slope * mean_t;
-                let estimate = (swath - intercept) / slope;
-                if !estimate.is_finite() || estimate < 0.0 {
-                    return None;
-                }
-                (String::from("estimated from light simulation"), estimate)
-            };
-            return Some(t_full_coverage);
+            }
+            return None;
         }
 
         // Regimes 1 & 2: in-plane swaths overlap; only inter-plane geometry matters.
@@ -439,7 +389,12 @@ impl PointGaps {
 
         Self {
             length,
-            phi: vec![0.0, length],
+            // No sentinels: `largest_gap` treats `phi` as points on a circle
+            // of circumference `length` and computes the wraparound gap
+            // explicitly. Seeding `[0, length]` here would split the
+            // wraparound arc into two linear pieces and systematically
+            // under-report the largest gap.
+            phi: Vec::new(),
             t: vec![t0[0]],
             t0,
             phi0,
@@ -461,7 +416,7 @@ impl Iterator for PointGaps {
         let new_phi = (self.phi0[i] + self.dphi * k as f64) % self.length;
         self.t.push(new_t);
         self.phi.push(new_phi);
-        let lg = largest_gap(&mut self.phi).expect("no gap found");
+        let lg = largest_gap(&mut self.phi, self.length).expect("no gap found");
         self.i += 1;
         Some(Gap {
             new_t,
@@ -471,14 +426,26 @@ impl Iterator for PointGaps {
     }
 }
 
-fn largest_gap(v: &mut Vec<f64>) -> Option<f64> {
-    if v.len() < 2 {
+/// Largest gap between consecutive points on a circle of circumference
+/// `length`. Treats `v` as positions in `[0, length)` and includes the
+/// wraparound arc `length - v[n-1] + v[0]`.
+///
+/// Returns `None` for an empty input. For a single point, returns `length`
+/// (the entire circle except that point is one empty arc).
+fn largest_gap(v: &mut Vec<f64>, length: f64) -> Option<f64> {
+    if v.is_empty() {
         return None;
     }
 
     v.sort_by(|a, b| a.partial_cmp(b).unwrap());
 
-    let mut max_gap = 0.0;
+    if v.len() == 1 {
+        return Some(length);
+    }
+
+    // Wraparound arc: from the last sorted point, around through `length`/0,
+    // back to the first sorted point.
+    let mut max_gap = length - v[v.len() - 1] + v[0];
     for w in v.windows(2) {
         let gap = w[1] - w[0];
         if gap > max_gap {
@@ -540,9 +507,61 @@ mod tests {
 
     #[test]
     fn largest_gap_is_correct() {
+        // Five points on a circle of circumference 1.0. The biggest empty
+        // arc is between 0.3 and 0.9 (length 0.6); the wraparound from 1.0
+        // back to 0.0 is degenerate (both are the same point on the circle
+        // — gap = 0).
         let mut v = vec![0.0, 0.2, 0.3, 0.9, 1.0];
-        let lg = largest_gap(&mut v).expect("largest gap should exist for len >= 2");
-        assert!((lg - 0.6).abs() < 1e-5);
+        let lg = largest_gap(&mut v, 1.0).expect("non-empty input");
+        assert!((lg - 0.6).abs() < 1e-9, "got {}", lg);
+    }
+
+    #[test]
+    fn largest_gap_uses_circular_wraparound() {
+        // Three satellites at 90°, 180°, 270° on a 360° circle. The largest
+        // empty arc wraps through 0°: from 270° forward to 90°, length 180°.
+        // A non-circular implementation that splits the wraparound at 0/360
+        // would report 90° (the largest of the in-range diffs).
+        let mut v = vec![90.0, 180.0, 270.0];
+        let lg = largest_gap(&mut v, 360.0).expect("non-empty input");
+        assert!((lg - 180.0).abs() < 1e-9, "got {}", lg);
+    }
+
+    #[test]
+    fn largest_gap_single_point_is_full_circle() {
+        let mut v = vec![42.0];
+        let lg = largest_gap(&mut v, 360.0).expect("non-empty input");
+        assert!((lg - 360.0).abs() < 1e-9, "got {}", lg);
+    }
+
+    #[test]
+    fn largest_gap_empty_is_none() {
+        let mut v: Vec<f64> = vec![];
+        assert!(largest_gap(&mut v, 360.0).is_none());
+    }
+
+    #[test]
+    fn point_gaps_reports_circular_wraparound() {
+        // Regression: with three satellites at 90°/180°/270° the iterator
+        // should report largest_gap = 180° on the third step (the empty arc
+        // wraps through 0°). The pre-fix sentinel-based implementation
+        // reported 90° here because the wraparound was split by phantom
+        // points at 0 and 360.
+        let pg = PointGaps::new(
+            360.0,
+            vec![0.0, 1.0, 2.0],
+            vec![90.0, 180.0, 270.0],
+            // dt/dphi are irrelevant for the first n steps — we only inspect
+            // the gap after all three real points have been added.
+            10.0,
+            0.0,
+        );
+        let third = pg.take(3).last().expect("three steps");
+        assert!(
+            (third.largest_gap - 180.0).abs() < 1e-9,
+            "got {}",
+            third.largest_gap
+        );
     }
 
     #[test]

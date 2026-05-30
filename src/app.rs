@@ -132,11 +132,11 @@ impl eframe::App for App {
                 let mut selected_planet: Option<(&str, f64, f64, f64)> = None;
                 ui.menu_button(egui::RichText::new("🌍"), |ui| {
                     if ui.button("Mercury").clicked() {
-                        selected_planet = Some(("Mercury", 22032E9, 0.00220968, 2439.7));
+                        selected_planet = Some(("Mercury", 22032E9, 0.255772647, 2439.7));
                         ui.close();
                     }
                     if ui.button("Venus").clicked() {
-                        selected_planet = Some(("Venus", 324859E9, -0.00107712, 6051.8));
+                        selected_planet = Some(("Venus", 324859E9, -0.061722655, 6051.8));
                         ui.close();
                     }
                     if ui.button("Earth").clicked() {
@@ -148,19 +148,19 @@ impl eframe::App for App {
                         ui.close();
                     }
                     if ui.button("Jupiter").clicked() {
-                        selected_planet = Some(("Jupiter", 1.266_865_4E17, 0.6330708, 69911.0));
+                        selected_planet = Some(("Jupiter", 1.266_865_4E17, 36.272040302, 69911.0));
                         ui.close();
                     }
                     if ui.button("Saturn").clicked() {
-                        selected_planet = Some(("Saturn", 3.793_119E16, 0.589644, 58232.0));
+                        selected_planet = Some(("Saturn", 3.793_119E16, 34.123222749, 58232.0));
                         ui.close();
                     }
                     if ui.button("Uranus").clicked() {
-                        selected_planet = Some(("Uranus", 5793939E9, -0.36432, 25362.0));
+                        selected_planet = Some(("Uranus", 5793939E9, -20.872254075, 25362.0));
                         ui.close();
                     }
                     if ui.button("Neptune").clicked() {
-                        selected_planet = Some(("Neptune", 6836529E9, 0.38988, 24622.0));
+                        selected_planet = Some(("Neptune", 6836529E9, 22.346368715, 24622.0));
                         ui.close();
                     }
                 });
