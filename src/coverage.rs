@@ -11,7 +11,7 @@
 //!
 //! Pole-cap wrap and dateline wrap are both handled.
 
-use std::f32::consts::PI;
+use std::f64::{self, consts::PI};
 
 use crate::constellation::Constellation;
 
@@ -24,7 +24,7 @@ pub struct CoverageMap {
     pub width: usize,
     pub height: usize,
     /// Time of first coverage per pixel [s]. `f32::INFINITY` = never covered.
-    pub data: Vec<f32>,
+    pub data: Vec<f64>,
 }
 
 /// Options controlling how a coverage map is rasterized.
@@ -34,7 +34,7 @@ pub struct RasterizeOptions {
     /// Supersample step in seconds. `None` = auto-pick from footprint size
     /// and ground speed so the footprint advances ≲ half its diameter per
     /// sub-step. Pass `Some(dt)` to override.
-    pub dt_rast: Option<f32>,
+    pub dt_rast: Option<f64>,
 }
 
 impl CoverageMap {
@@ -42,7 +42,7 @@ impl CoverageMap {
         Self {
             width,
             height,
-            data: vec![f32::INFINITY; width * height],
+            data: vec![f64::INFINITY; width * height],
         }
     }
 
@@ -64,8 +64,8 @@ impl CoverageMap {
         c: &Constellation,
         plane: u32,
         slot: u32,
-        t_start: f32,
-        t_end: f32,
+        t_start: f64,
+        t_end: f64,
         opts: &RasterizeOptions,
     ) -> Self {
         let mut map = Self::new(opts.width, opts.height);
@@ -85,20 +85,20 @@ impl CoverageMap {
         let dt_rast = opts.dt_rast.unwrap_or_else(|| {
             let n = 2.0 * PI / c.orbital_period();
             let denom = n + c.omega.abs();
-            let k = 0.5;
+            let k = 0.1;
             if denom > 0.0 {
                 (2.0 * k * sigma / denom).max(1e-3)
             } else {
                 1.0
             }
         });
-        let dt_rast = dt_rast.max(f32::EPSILON);
+        let dt_rast = dt_rast.max(f64::EPSILON);
 
         let cos_sigma = sigma.cos();
         let w = opts.width;
         let h = opts.height;
-        let wf = w as f32;
-        let hf = h as f32;
+        let wf = w as f64;
+        let hf = h as f64;
 
         let mut t = t_start;
         while t <= t_end {
@@ -122,7 +122,7 @@ impl CoverageMap {
             let pole_wrap = sub_lat.abs() + sigma >= 0.5 * PI;
 
             for y in y_top..y_bot_excl {
-                let lat = 0.5 * PI - (y as f32 + 0.5) / hf * PI;
+                let lat = 0.5 * PI - (y as f64 + 0.5) / hf * PI;
                 let (slat, clat) = lat.sin_cos();
 
                 // Pixel x-range, possibly straddling the dateline (handled with rem_euclid).
@@ -149,7 +149,7 @@ impl CoverageMap {
                 let row = y * w;
                 for xi in x_start..x_end {
                     let x = xi.rem_euclid(w as i64) as usize;
-                    let lon = (x as f32 + 0.5) / wf * 2.0 * PI - PI;
+                    let lon = (x as f64 + 0.5) / wf * 2.0 * PI - PI;
                     let (slon, clon) = lon.sin_cos();
                     let p_hat = [clat * clon, clat * slon, slat];
                     let dotp = p_hat[0] * r[0] + p_hat[1] * r[1] + p_hat[2] * r[2];
@@ -173,7 +173,7 @@ impl CoverageMap {
 mod tests {
     use super::*;
 
-    fn earth_like(inclination_deg: f32) -> Constellation {
+    fn earth_like(inclination_deg: f64) -> Constellation {
         Constellation {
             inclination: inclination_deg.to_radians(),
             satellites: 1,
@@ -182,7 +182,7 @@ mod tests {
             radius: 6_371_000.0,
             mu: 3.986_004_418e14,
             omega: 7.292_115e-5,
-            fov: 60.0_f32.to_radians(),
+            fov: 60.0_f64.to_radians(),
         }
     }
 
@@ -201,7 +201,7 @@ mod tests {
 
         let mut covered = 0usize;
         for y in 0..map.height {
-            let lat = 0.5 * PI - (y as f32 + 0.5) / map.height as f32 * PI;
+            let lat = 0.5 * PI - (y as f64 + 0.5) / map.height as f64 * PI;
             for x in 0..map.width {
                 if map.data[y * map.width + x].is_finite() {
                     covered += 1;
@@ -254,7 +254,7 @@ mod tests {
         let mut a = CoverageMap::new(4, 2);
         let mut b = CoverageMap::new(4, 2);
         a.data[0] = 10.0;
-        a.data[1] = f32::INFINITY;
+        a.data[1] = f64::INFINITY;
         b.data[0] = 5.0;
         b.data[1] = 7.0;
         a.combine_min(&b);

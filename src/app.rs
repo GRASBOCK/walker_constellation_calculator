@@ -8,18 +8,18 @@ pub struct App {
     // Example stuff:
     label: String,
 
-    inclination: f32,
-    satellites: f32,
-    planes: f32,
-    altitude: f32,
-    radius: f32,
-    mu: f32,
-    omega: f32,
-    fov: f32,
+    inclination: f64,
+    satellites: f64,
+    planes: f64,
+    altitude: f64,
+    radius: f64,
+    mu: f64,
+    omega: f64,
+    fov: f64,
 
     // Simulation parameters (user-facing units: hours / seconds)
-    sim_duration_h: f32,
-    sim_dt_s: f32,
+    sim_duration_h: f64,
+    sim_dt_s: f64,
 
     // Coverage map output size
     coverage_width: usize,
@@ -32,7 +32,7 @@ pub struct App {
     /// Acts as the simulated worst-case revisit time over the globe (excluding
     /// pixels that were never covered).
     #[serde(skip)]
-    coverage_max_time_s: Option<f32>,
+    coverage_max_time_s: Option<f64>,
     /// Number of pixels in the last computed map that were never covered.
     #[serde(skip)]
     coverage_uncovered_pixels: Option<usize>,
@@ -129,7 +129,7 @@ impl eframe::App for App {
                     .on_hover_text("Radius of the planet in km");
                 ui.add(egui::DragValue::new(&mut self.radius).speed(1.0));
 
-                let mut selected_planet: Option<(&str, f32, f32, f32)> = None;
+                let mut selected_planet: Option<(&str, f64, f64, f64)> = None;
                 ui.menu_button(egui::RichText::new("🌍"), |ui| {
                     if ui.button("Mercury").clicked() {
                         selected_planet = Some(("Mercury", 22032E9, 0.00220968, 2439.7));
@@ -220,17 +220,24 @@ impl eframe::App for App {
 
             ui.separator();
 
-            ui.label("Analytical Solution");
-            ui.horizontal(|ui| {
-                match constellation.max_revisit_time() {
-                    Some(seconds) => ui.label(format!(
-                        "Maximum revisit time: {:.3} hours ({:.3} days)",
-                        seconds / 3600.0,
-                        seconds / 86400.0,
-                    )),
-                    None => ui.label("Maximum revisit time: N/A (invalid geometry or parameters)"),
-                };
-            });
+            ui.label("Fast Solution");
+            match constellation.max_revisit_time() {
+                Some((method, seconds)) => {
+                    ui.horizontal(|ui| ui.label(format!("Method: {}", method,)));
+                    ui.horizontal(|ui| {
+                        ui.label(format!(
+                            "Maximum revisit time: {:.3} hours ({:.3} days)",
+                            seconds / 3600.0,
+                            seconds / 86400.0,
+                        ))
+                    });
+                }
+                None => {
+                    ui.horizontal(|ui| {
+                        ui.label("Maximum revisit time: N/A (invalid geometry or parameters)")
+                    });
+                }
+            };
 
             ui.separator();
             ui.label("Simulation");
@@ -242,14 +249,14 @@ impl eframe::App for App {
                 ui.add(
                     egui::DragValue::new(&mut self.sim_duration_h)
                         .speed(0.1)
-                        .range(0.0..=f32::INFINITY),
+                        .range(0.0..=f64::INFINITY),
                 );
                 ui.label("dt [s]:")
                     .on_hover_text("Simulation sample step in seconds");
                 ui.add(
                     egui::DragValue::new(&mut self.sim_dt_s)
                         .speed(1.0)
-                        .range(0.001..=f32::INFINITY),
+                        .range(0.001..=f64::INFINITY),
                 );
             });
 
@@ -295,12 +302,12 @@ impl eframe::App for App {
                     // the displayed "max revisit". The very edge of the band
                     // is dominated by short grazing visits at the inclination
                     // limit and would otherwise saturate the colormap.
-                    const TRIM_FRAC: f32 = 0.05;
+                    const TRIM_FRAC: f64 = 0.05;
                     let sigma = constellation.coverage_half_angle();
                     let lat_band = constellation.inclination + sigma;
-                    let lat_keep = (lat_band * (1.0 - TRIM_FRAC)).min(0.5 * std::f32::consts::PI);
-                    let h_f = combined.height as f32;
-                    let pi = std::f32::consts::PI;
+                    let lat_keep = (lat_band * (1.0 - TRIM_FRAC)).min(0.5 * std::f64::consts::PI);
+                    let h_f = combined.height as f64;
+                    let pi = std::f64::consts::PI;
                     let y_lo = (((0.5 * pi - lat_keep) / pi * h_f).floor().max(0.0)) as usize;
                     let y_hi =
                         ((((0.5 * pi + lat_keep) / pi * h_f).ceil()) as usize).min(combined.height);
@@ -310,7 +317,7 @@ impl eframe::App for App {
                         (0, combined.height) // degenerate — fall back to full map
                     };
 
-                    let mut t_max: f32 = 0.0;
+                    let mut t_max: f64 = 0.0;
                     let mut any_finite = false;
                     for y in y_lo..y_hi {
                         let row = y * combined.width;
@@ -417,9 +424,9 @@ impl eframe::App for App {
 // ----- Coverage colormap & image conversion ------------------------------
 
 /// Map a normalized scalar `t ∈ [0, 1]` to a viridis-like RGBA colour.
-fn viridis_like(t: f32) -> [u8; 4] {
+fn viridis_like(t: f64) -> [u8; 4] {
     // 5 control points sampled along the viridis colormap.
-    const STOPS: [[f32; 3]; 5] = [
+    const STOPS: [[f64; 3]; 5] = [
         [68.0, 1.0, 84.0],
         [59.0, 82.0, 139.0],
         [33.0, 145.0, 140.0],
@@ -427,9 +434,9 @@ fn viridis_like(t: f32) -> [u8; 4] {
         [253.0, 231.0, 37.0],
     ];
     let n = STOPS.len() - 1;
-    let f = (t.clamp(0.0, 1.0) * n as f32).min(n as f32);
+    let f = (t.clamp(0.0, 1.0) * n as f64).min(n as f64);
     let i = (f as usize).min(n - 1);
-    let u = f - i as f32;
+    let u = f - i as f64;
     let a = STOPS[i];
     let b = STOPS[i + 1];
     [
@@ -445,7 +452,7 @@ fn viridis_like(t: f32) -> [u8; 4] {
 /// clamped to the top of the gradient); pixels never covered are drawn as dark
 /// grey. `t_max` is provided by the caller so the colour scale can ignore
 /// edge-band outliers.
-fn coverage_to_color_image(map: &CoverageMap, t_max: f32) -> egui::ColorImage {
+fn coverage_to_color_image(map: &CoverageMap, t_max: f64) -> egui::ColorImage {
     let inv = if t_max > 0.0 { 1.0 / t_max } else { 1.0 };
 
     let mut bytes = Vec::with_capacity(map.width * map.height * 4);
