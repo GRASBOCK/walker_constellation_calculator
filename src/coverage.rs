@@ -3,11 +3,12 @@
 //! Produces a float-valued raster ([`CoverageMap`]) on an equirectangular
 //! projection of the planet, where each pixel stores the **earliest time**
 //! (in seconds) at which it was inside the satellite's instantaneous
-//! footprint. Pixels never covered hold `f32::INFINITY`.
+//! footprint. Pixels never covered hold `f64::INFINITY`.
 //!
 //! Temporal aliasing is avoided by sampling the satellite state at a
-//! sub-step `dt_rast` chosen so the footprint advances at most ~half its
-//! own diameter per sub-step. Override via [`RasterizeOptions::dt_rast`].
+//! sub-step `dt_rast` chosen so the footprint advances at most a fraction
+//! `k` of its own diameter per sub-step (currently `k = 0.1`). Override
+//! via [`RasterizeOptions::dt_rast`].
 //!
 //! Pole-cap wrap and dateline wrap are both handled.
 
@@ -23,7 +24,7 @@ use crate::constellation::Constellation;
 pub struct CoverageMap {
     pub width: usize,
     pub height: usize,
-    /// Time of first coverage per pixel [s]. `f32::INFINITY` = never covered.
+    /// Time of first coverage per pixel [s]. `f64::INFINITY` = never covered.
     pub data: Vec<f64>,
 }
 
@@ -32,7 +33,7 @@ pub struct RasterizeOptions {
     pub width: usize,
     pub height: usize,
     /// Supersample step in seconds. `None` = auto-pick from footprint size
-    /// and ground speed so the footprint advances ≲ half its diameter per
+    /// and ground speed so the footprint advances ≲ `0.1 · (2σ)` per
     /// sub-step. Pass `Some(dt)` to override.
     pub dt_rast: Option<f64>,
 }
@@ -246,6 +247,141 @@ mod tests {
                     b
                 );
             }
+        }
+    }
+
+    /// Brute-force ground truth: a pixel center is covered at some sampled
+    /// time iff the angular distance from the pixel to the sub-sat point is
+    /// `≤ σ`. Using the same `dt` as the rasterizer isolates geometry from
+    /// temporal aliasing.
+    fn brute_force_covered(
+        c: &Constellation,
+        plane: u32,
+        slot: u32,
+        t_start: f64,
+        t_end: f64,
+        dt: f64,
+        lat: f64,
+        lon: f64,
+    ) -> bool {
+        let sigma = c.coverage_half_angle();
+        let cos_sigma = sigma.cos();
+        let (slat, clat) = lat.sin_cos();
+        let (slon, clon) = lon.sin_cos();
+        let p = [clat * clon, clat * slon, slat];
+        let mut t = t_start;
+        while t <= t_end {
+            let r = c.sat_state_at(plane, slot, t).r_hat;
+            if p[0] * r[0] + p[1] * r[1] + p[2] * r[2] >= cos_sigma {
+                return true;
+            }
+            t += dt;
+        }
+        false
+    }
+
+    /// Equatorial orbit (i = 0) keeps the sub-sat point on the equator, so
+    /// the cap covers exactly the band |lat| ≤ σ over one full ground-track
+    /// revolution. Rows well inside the band must be fully covered; rows
+    /// well outside must be entirely uncovered.
+    #[test]
+    fn equatorial_orbit_covers_exactly_band_within_sigma() {
+        let c = earth_like(0.0);
+        let sigma = c.coverage_half_angle();
+
+        // In ECEF the sub-sat longitude drifts at (n - ω), so one full lap
+        // takes 2π / |n - ω|.
+        let n = 2.0 * PI / c.orbital_period();
+        let lap = 2.0 * PI / (n - c.omega).abs();
+        let opts = RasterizeOptions {
+            width: 360,
+            height: 180,
+            dt_rast: None,
+        };
+        let map = CoverageMap::from_satellite(&c, 0, 0, 0.0, lap, &opts);
+
+        let hf = map.height as f64;
+        let margin = 0.5 * PI / hf; // one pixel row of slack
+        for y in 0..map.height {
+            let lat = 0.5 * PI - (y as f64 + 0.5) / hf * PI;
+            let row_all = (0..map.width).all(|x| map.data[y * map.width + x].is_finite());
+            let row_none = (0..map.width).all(|x| map.data[y * map.width + x].is_infinite());
+            if lat.abs() < sigma - margin {
+                assert!(
+                    row_all,
+                    "row at lat={}° (inside |lat|<σ={}°) not fully covered",
+                    lat.to_degrees(),
+                    sigma.to_degrees()
+                );
+            } else if lat.abs() > sigma + margin {
+                assert!(
+                    row_none,
+                    "row at lat={}° (outside |lat|>σ={}°) has covered pixels",
+                    lat.to_degrees(),
+                    sigma.to_degrees()
+                );
+            }
+        }
+    }
+
+    /// Validate that the bounding-box + dot-product rasterization agrees with
+    /// the brute-force per-pixel test on a representative subgrid — no false
+    /// positives outside the cap and no false negatives inside (including
+    /// across the dateline and near the poles).
+    #[test]
+    fn rasterizer_matches_brute_force_on_subgrid() {
+        let c = earth_like(53.0);
+        let dt = 60.0;
+        let opts = RasterizeOptions {
+            width: 90,
+            height: 45,
+            dt_rast: Some(dt),
+        };
+        let map = CoverageMap::from_satellite(&c, 0, 0, 0.0, c.orbital_period(), &opts);
+
+        let hf = map.height as f64;
+        let wf = map.width as f64;
+        let mut checked = 0usize;
+        for y in (0..map.height).step_by(3) {
+            for x in (0..map.width).step_by(5) {
+                let lat = 0.5 * PI - (y as f64 + 0.5) / hf * PI;
+                let lon = (x as f64 + 0.5) / wf * 2.0 * PI - PI;
+                let raster = map.data[y * map.width + x].is_finite();
+                let truth = brute_force_covered(&c, 0, 0, 0.0, c.orbital_period(), dt, lat, lon);
+                assert_eq!(
+                    raster,
+                    truth,
+                    "mismatch at (x={}, y={}) lat={}° lon={}°",
+                    x,
+                    y,
+                    lat.to_degrees(),
+                    lon.to_degrees()
+                );
+                checked += 1;
+            }
+        }
+        assert!(checked > 0);
+    }
+
+    /// A polar orbit (i = 90°) passes essentially over the pole, so every
+    /// pixel in the top pixel row must be covered. This exercises the
+    /// `pole_wrap` branch: without it, the longitude bounding box would
+    /// collapse near the pole and miss most of the row.
+    #[test]
+    fn polar_orbit_covers_the_pole_row() {
+        let c = earth_like(90.0);
+        let opts = RasterizeOptions {
+            width: 180,
+            height: 90,
+            dt_rast: None,
+        };
+        let map = CoverageMap::from_satellite(&c, 0, 0, 0.0, c.orbital_period(), &opts);
+        for x in 0..map.width {
+            assert!(
+                map.data[x].is_finite(),
+                "pole-row pixel x={} not covered by polar orbit",
+                x
+            );
         }
     }
 
