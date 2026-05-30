@@ -223,7 +223,7 @@ impl eframe::App for App {
             ui.label("Fast Solution");
             match constellation.max_revisit_time() {
                 Some((method, seconds)) => {
-                    ui.horizontal(|ui| ui.label(format!("Method: {}", method,)));
+                    ui.horizontal(|ui| ui.label(format!("Method: {method}",)));
                     ui.horizontal(|ui| {
                         ui.label(format!(
                             "Maximum revisit time: {:.3} hours ({:.3} days)",
@@ -237,7 +237,7 @@ impl eframe::App for App {
                         ui.label("Maximum revisit time: N/A (invalid geometry or parameters)")
                     });
                 }
-            };
+            }
 
             ui.separator();
             ui.label("Simulation");

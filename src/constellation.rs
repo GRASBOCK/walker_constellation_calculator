@@ -382,7 +382,7 @@ impl PointGaps {
             "delta_t and delta_phi must have the same length"
         );
 
-        let mut pairs: Vec<(f64, f64)> = t0.into_iter().zip(phi0.into_iter()).collect();
+        let mut pairs: Vec<(f64, f64)> = t0.into_iter().zip(phi0).collect();
         pairs.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
 
         let (t0, phi0): (Vec<f64>, Vec<f64>) = pairs.into_iter().unzip();
