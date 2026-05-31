@@ -157,7 +157,7 @@ impl Constellation {
 
             let pg = PointGaps::new(2.0 * PI, t0, omega0, t_orb, 2.0 * PI - t_orb * self.omega);
 
-            for g in pg.take(1000) {
+            for g in pg.take(5000) {
                 if g.largest_gap < swath {
                     return Some((String::from("light simulation"), g.new_t));
                 }
