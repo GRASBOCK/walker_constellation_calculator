@@ -276,13 +276,11 @@ impl Constellation {
             v_ecef[2] - vr * r_hat[2],
         ];
         let t_hat = normalize(v_tan);
-        let c_hat = normalize(cross(t_hat, r_hat));
 
         SatState {
             r_ecef,
             r_hat,
             t_hat,
-            c_hat,
         }
     }
 }
@@ -294,7 +292,6 @@ pub(crate) struct SatState {
     pub r_hat: [f64; 3],
     #[expect(dead_code, reason = "kept for completeness of the local frame")]
     pub t_hat: [f64; 3],
-    pub c_hat: [f64; 3],
 }
 
 // --- small vector helpers (3D, f64) -----------------------------------------
@@ -311,14 +308,6 @@ pub(crate) fn rot_z(v: [f64; 3], a: f64) -> [f64; 3] {
 
 pub(crate) fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
     a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
-}
-
-pub(crate) fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
-    [
-        a[1] * b[2] - a[2] * b[1],
-        a[2] * b[0] - a[0] * b[2],
-        a[0] * b[1] - a[1] * b[0],
-    ]
 }
 
 pub(crate) fn normalize(v: [f64; 3]) -> [f64; 3] {
