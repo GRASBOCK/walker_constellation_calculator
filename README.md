@@ -1,5 +1,7 @@
 # Walker Constellation Calculator
 
+You can use the calculator [online](https://grasbock.github.io/walker_constellation_calculator/).
+
 ## Development
 
 Install [rust](https://rust-lang.org/)
