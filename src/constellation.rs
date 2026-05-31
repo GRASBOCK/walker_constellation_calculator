@@ -143,8 +143,9 @@ impl Constellation {
 
                     // Initial longitude offset on the equator:
                     // φ₀(i,j) = 2π/S · i + 2π/P · j + 2π/(S·P) · F
-                    let phi_offset =
-                        (2.0 * PI / s) * i_f + (2.0 * PI / p) * j_f + (2.0 * PI / (s * p)) * f;
+                    let phi_offset = (2.0 * PI / s) * i_f
+                        + (2.0 * PI / p) * j_f
+                        + (2.0 * PI / (s * p)) * j_f * f;
 
                     // Initial time offset:
                     // t₀(i,j) = T_orb/2 - (T_orb/S · i + T_orb/(S·P) · F · i · j) mod (T_orb/2)
@@ -207,9 +208,6 @@ impl Constellation {
         let mut groundtrack: Vec<Vec<LatLon>> = (0..total_sats)
             .map(|_| Vec::with_capacity(n_steps))
             .collect();
-        let mut coverage_edge: Vec<Vec<CoverageEdge>> = (0..total_sats)
-            .map(|_| Vec::with_capacity(n_steps))
-            .collect();
         let mut time = Vec::with_capacity(n_steps);
 
         for step in 0..n_steps {
@@ -222,25 +220,10 @@ impl Constellation {
 
                     let state = self.sat_state_at(p, s, t);
                     let r_hat = state.r_hat;
-                    let c_hat = state.c_hat;
 
                     // (lat, lon) of sub-satellite point
                     let sub_ll = to_lat_lon(r_hat);
                     groundtrack[idx].push(sub_ll);
-
-                    // edge points on the unit sphere at central angle σ along ±c_hat
-                    let (ss, cs) = sigma.sin_cos();
-                    let right = [
-                        cs * r_hat[0] + ss * c_hat[0],
-                        cs * r_hat[1] + ss * c_hat[1],
-                        cs * r_hat[2] + ss * c_hat[2],
-                    ];
-                    let left = [
-                        cs * r_hat[0] - ss * c_hat[0],
-                        cs * r_hat[1] - ss * c_hat[1],
-                        cs * r_hat[2] - ss * c_hat[2],
-                    ];
-                    coverage_edge[idx].push((to_lat_lon(left), to_lat_lon(right)));
                 }
             }
         }
