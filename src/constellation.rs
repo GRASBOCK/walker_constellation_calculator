@@ -473,11 +473,11 @@ mod tests {
             inclination: inclination_deg.to_radians(),
             satellites: 4,
             planes: 3,
-            altitude: 550_000.0,        // 550 km
-            radius: 6_371_000.0,        // 6371 km
-            mu: 3.986_004_418e14,       // m^3/s^2
-            omega: 7.292_115e-5,        // rad/s
-            fov: 60.0_f64.to_radians(), // 60° full FoV
+            altitude: 550_000.0,                             // 550 km
+            radius: 6_371_000.0,                             // 6371 km
+            mu: 3.986_004_418e14,                            // m^3/s^2
+            omega: (15.0 / (24.0f64 * 3600.0)).to_radians(), // rad/s
+            fov: 60.0_f64.to_radians(),                      // 60° full FoV
         }
     }
 
