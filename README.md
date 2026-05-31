@@ -1,6 +1,6 @@
 # Walker Constellation Calculator
 
-You can use the calculator [online](https://grasbock.github.io/walker_constellation_calculator/).
+You can use the [online calculator](https://grasbock.github.io/walker_constellation_calculator/).
 
 ## Development
 
