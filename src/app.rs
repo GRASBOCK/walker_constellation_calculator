@@ -210,7 +210,6 @@ impl eframe::App for App {
                 .round()
                 .clamp(0.0, (self.planes - 1.0).max(0.0));
             self.mu = self.mu.max(0.0);
-            self.omega = self.omega.max(0.0);
             self.radius = self.radius.max(0.0);
             self.fov = self.fov.max(0.0);
 
