@@ -55,8 +55,6 @@ pub type CoverageEdge = (LatLon, LatLon);
 pub struct SimulationData {
     /// the groundtrack as a vector of (lat, lon) coordinates for each satellite
     pub groundtrack: Vec<Vec<LatLon>>,
-    /// coverage edges as a vector of left and right (lat, lon) coordinates for each satellite
-    pub coverage_edge: Vec<Vec<CoverageEdge>>,
     /// time vector
     pub time: Vec<f64>,
 }
@@ -186,7 +184,7 @@ impl Constellation {
     ///
     /// Assumptions:
     /// - Circular orbits at radius `a = R + h`, mean motion `n = √(μ/a³)`.
-    /// - Walker Delta RAAN spread of 2π (Δω = 2π/P).
+    /// - Walker Delta RAAN spread of 2π (ΔΩ = 2π/P).
     /// - Phasing parameter F = 0 (hardcoded for now).
     /// - Epoch (t = 0): plane 0's RAAN = 0; satellite (p=0, s=0) at its
     ///   ascending node; in-plane offsets s·(2π/S); inter-plane phasing
@@ -245,11 +243,7 @@ impl Constellation {
             }
         }
 
-        SimulationData {
-            groundtrack,
-            coverage_edge,
-            time,
-        }
+        SimulationData { groundtrack, time }
     }
 
     /// State of one satellite at time `t`, in the planet-fixed (ECEF-like) frame.
@@ -492,13 +486,9 @@ mod tests {
 
         let total_sats = (c.satellites * c.planes) as usize;
         assert_eq!(data.groundtrack.len(), total_sats);
-        assert_eq!(data.coverage_edge.len(), total_sats);
         assert!(!data.time.is_empty());
         for track in &data.groundtrack {
             assert_eq!(track.len(), data.time.len());
-        }
-        for edges in &data.coverage_edge {
-            assert_eq!(edges.len(), data.time.len());
         }
 
         // Latitude must stay within ±i (with a small numerical slack).
@@ -589,43 +579,6 @@ mod tests {
                 assert!(lat.abs() < 1e-4, "equatorial track left equator: lat={lat}");
             }
         }
-    }
-
-    #[test]
-    fn coverage_edges_are_at_central_angle_sigma() {
-        let c = earth_like(53.0);
-        let sigma = c.coverage_half_angle();
-        let inp = SimulationInput {
-            duration: c.orbital_period() * 0.25,
-            dt: 120.0,
-        };
-        let data = c.simulation(&inp);
-
-        // For each sample, the angular distance from sub-sat to each edge
-        // (computed on the unit sphere) should equal σ.
-        for (sat_track, sat_edges) in data.groundtrack.iter().zip(&data.coverage_edge) {
-            for ((lat, lon), (left, right)) in sat_track.iter().zip(sat_edges) {
-                let sub = ll_to_unit(*lat, *lon);
-                let l = ll_to_unit(left.0, left.1);
-                let r = ll_to_unit(right.0, right.1);
-                let d_left = dot(sub, l).clamp(-1.0, 1.0).acos();
-                let d_right = dot(sub, r).clamp(-1.0, 1.0).acos();
-                assert!(
-                    (d_left - sigma).abs() < 1e-3,
-                    "left edge angle {d_left} vs σ {sigma}"
-                );
-                assert!(
-                    (d_right - sigma).abs() < 1e-3,
-                    "right edge angle {d_right} vs σ {sigma}"
-                );
-            }
-        }
-    }
-
-    fn ll_to_unit(lat: f64, lon: f64) -> [f64; 3] {
-        let (slat, clat) = lat.sin_cos();
-        let (slon, clon) = lon.sin_cos();
-        [clat * clon, clat * slon, slat]
     }
 
     #[test]
