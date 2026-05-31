@@ -143,13 +143,12 @@ impl Constellation {
 
                     // Initial longitude offset on the equator:
                     let phi_offset = (2.0 * PI / s) * i_f + (2.0 * PI / (s * p)) * j_f * f;
-                    let omega_from_phi_offset = phi_offset / (2.0 * PI) * t_orb * self.omega;
-                    let omega = (2.0 * PI / p) * j_f + omega_from_phi_offset;
+                    let phi_until_loop = phi_offset % (2.0 * PI);
+                    let time_until_loop = phi_until_loop / (2.0 * PI) * t_orb;
+                    let omega_in_plane_precession = time_until_loop * self.omega;
+                    let omega = (2.0 * PI / p) * j_f + omega_in_plane_precession;
                     // Initial time offset:
-                    // t₀(i,j) = T_orb/2 - (T_orb/S · i + T_orb/(S·P) · F · i · j) mod (T_orb/2)
-                    let phase_time =
-                        ((t_orb / s) * i_f + (t_orb / (s * p)) * f * i_f * j_f).rem_euclid(t_orb);
-                    let t_offset = (t_orb - phase_time).rem_euclid(t_orb);
+                    let t_offset = time_until_loop;
 
                     omega0.push(omega.rem_euclid(2.0 * PI));
                     t0.push(t_offset);
