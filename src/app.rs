@@ -11,6 +11,7 @@ pub struct App {
     inclination: f64,
     satellites: f64,
     planes: f64,
+    phasing: f64,
     altitude: f64,
     radius: f64,
     mu: f64,
@@ -46,6 +47,7 @@ impl Default for App {
             inclination: 60.0,
             satellites: 16.0,
             planes: 2.0,
+            phasing: 0.0,
             altitude: 500.0,
             mu: 3.986_004_5E14,
             radius: 6378.1,
@@ -113,6 +115,15 @@ impl eframe::App for App {
                 ui.label("Planes:")
                     .on_hover_text("Number of Planes in Constellation");
                 ui.add(egui::DragValue::new(&mut self.planes).speed(1.0));
+                ui.label("Phasing F:").on_hover_text(
+                    "Walker phasing parameter F (integer in 0..P). Controls the\n\
+                     inter-plane phase offset 2π·F/(S·P).",
+                );
+                ui.add(
+                    egui::DragValue::new(&mut self.phasing)
+                        .speed(1.0)
+                        .range(0.0..=(self.planes - 1.0).max(0.0)),
+                );
                 ui.label(format!(
                     "Total Satellites: {:.0}",
                     self.planes * self.satellites
@@ -194,6 +205,10 @@ impl eframe::App for App {
             self.altitude = self.altitude.max(0.0);
             self.satellites = self.satellites.max(1.0).round();
             self.planes = self.planes.max(1.0).round();
+            self.phasing = self
+                .phasing
+                .round()
+                .clamp(0.0, (self.planes - 1.0).max(0.0));
             self.mu = self.mu.max(0.0);
             self.omega = self.omega.max(0.0);
             self.radius = self.radius.max(0.0);
@@ -203,6 +218,7 @@ impl eframe::App for App {
                 inclination: self.inclination.to_radians(),
                 satellites: self.satellites as u32,
                 planes: self.planes as u32,
+                phasing: self.phasing as u32,
                 altitude: self.altitude * 1000.0,
                 radius: self.radius * 1000.0,
                 mu: self.mu,

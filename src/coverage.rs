@@ -183,6 +183,7 @@ mod tests {
             inclination: inclination_deg.to_radians(),
             satellites: 1,
             planes: 1,
+            phasing: 0,
             altitude: 550_000.0,
             radius: 6_371_000.0,
             mu: 3.986_004_418e14,

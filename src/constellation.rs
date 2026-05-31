@@ -28,6 +28,9 @@ pub struct Constellation {
     pub satellites: u32,
     /// Number of orbital planes (P)
     pub planes: u32,
+    /// Walker phasing parameter (F), integer in `0..P`.
+    /// Controls the inter-plane phase offset 2π·F/(S·P).
+    pub phasing: u32,
     /// Altitude above surface [m]
     pub altitude: f64,
     /// Planet radius [m]
@@ -131,7 +134,7 @@ impl Constellation {
 
             let s = self.satellites as f64;
             let p = self.planes as f64;
-            let f = 0.0_f64; // Walker phasing parameter F (currently hardcoded to match simulation())
+            let f = self.phasing as f64;
 
             for j in 0..self.planes {
                 for i in 0..self.satellites {
@@ -178,14 +181,13 @@ impl Constellation {
         }
     }
 
-    /// Simulate satellite ground tracks and instantaneous coverage edges
-    /// in a planet-fixed (ECEF-like) frame, sampled at `inp.dt` over
-    /// `[0, inp.duration]`.
+    /// Simulate satellite ground tracks in a planet-fixed (ECEF-like) frame,
+    /// sampled at `inp.dt` over `[0, inp.duration]`.
     ///
     /// Assumptions:
     /// - Circular orbits at radius `a = R + h`, mean motion `n = √(μ/a³)`.
     /// - Walker Delta RAAN spread of 2π (ΔΩ = 2π/P).
-    /// - Phasing parameter F = 0 (hardcoded for now).
+    /// - Phasing parameter F from `self.phasing`.
     /// - Epoch (t = 0): plane 0's RAAN = 0; satellite (p=0, s=0) at its
     ///   ascending node; in-plane offsets s·(2π/S); inter-plane phasing
     ///   p·F·2π/(S·P).
@@ -253,7 +255,7 @@ impl Constellation {
     /// orthonormal basis at the satellite, with `c_hat = t_hat × r_hat`
     /// pointing to the right of motion.
     pub(crate) fn sat_state_at(&self, plane: u32, slot: u32, t: f64) -> SatState {
-        const F: u32 = 0; // Walker phasing parameter (hardcoded, matches simulation())
+        let f = self.phasing;
 
         let two_pi = 2.0 * PI;
         let a = self.radius + self.altitude;
@@ -263,7 +265,7 @@ impl Constellation {
         let d_raan = two_pi / self.planes.max(1) as f64;
         let d_in_plane = two_pi / self.satellites.max(1) as f64;
         let d_between = if self.satellites > 0 && self.planes > 0 {
-            two_pi * F as f64 / (self.satellites * self.planes) as f64
+            two_pi * f as f64 / (self.satellites * self.planes) as f64
         } else {
             0.0
         };
@@ -467,6 +469,7 @@ mod tests {
             inclination: inclination_deg.to_radians(),
             satellites: 4,
             planes: 3,
+            phasing: 0,
             altitude: 550_000.0,                             // 550 km
             radius: 6_371_000.0,                             // 6371 km
             mu: 3.986_004_418e14,                            // m^3/s^2
@@ -630,6 +633,7 @@ mod tests {
             inclination: 60.0_f64.to_radians(),
             satellites: 2,
             planes: 2,
+            phasing: 0,
             altitude: 500_000.0,
             radius: 6_371_000.0,
             mu: 3.986_004_418e14,
