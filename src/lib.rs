@@ -3,3 +3,4 @@
 mod app;
 pub use app::App;
 pub mod constellation;
+pub mod coverage;
