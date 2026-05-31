@@ -314,15 +314,11 @@ impl eframe::App for App {
 
                     // Stats from the freshly computed map.
                     //
-                    // Trim the outer 5% of the covered latitude band
-                    // (±(i + σ)) when picking the colour-scale maximum and
-                    // the displayed "max revisit". The very edge of the band
+                    // Trim above inclination when picking the colour-scale maximum and
+                    // the displayed "max revisit". The very edge of the coverage band
                     // is dominated by short grazing visits at the inclination
                     // limit and would otherwise saturate the colormap.
-                    const TRIM_FRAC: f64 = 0.05;
-                    let sigma = constellation.coverage_half_angle();
-                    let lat_band = constellation.inclination + sigma;
-                    let lat_keep = (lat_band * (1.0 - TRIM_FRAC)).min(0.5 * std::f64::consts::PI);
+                    let lat_keep = constellation.inclination;
                     let h_f = combined.height as f64;
                     let pi = std::f64::consts::PI;
                     let y_lo = (((0.5 * pi - lat_keep) / pi * h_f).floor().max(0.0)) as usize;

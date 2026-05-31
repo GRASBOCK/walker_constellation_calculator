@@ -130,7 +130,7 @@ impl Constellation {
         // of `λ_gap`.
         if theta.abs() > swath {
             let mut t0 = Vec::with_capacity((self.satellites * self.planes) as usize);
-            let mut phi0 = Vec::with_capacity(t0.capacity());
+            let mut omega0 = Vec::with_capacity(t0.capacity());
 
             let s = self.satellites as f64;
             let p = self.planes as f64;
@@ -142,23 +142,21 @@ impl Constellation {
                     let j_f = j as f64;
 
                     // Initial longitude offset on the equator:
-                    // φ₀(i,j) = 2π/S · i + 2π/P · j + 2π/(S·P) · F
-                    let phi_offset = (2.0 * PI / s) * i_f
-                        + (2.0 * PI / p) * j_f
-                        + (2.0 * PI / (s * p)) * j_f * f;
-
+                    let phi_offset = (2.0 * PI / s) * i_f + (2.0 * PI / (s * p)) * j_f * f;
+                    let omega_from_phi_offset = phi_offset / (2.0 * PI) * t_orb * self.omega;
+                    let omega = (2.0 * PI / p) * j_f + omega_from_phi_offset;
                     // Initial time offset:
                     // t₀(i,j) = T_orb/2 - (T_orb/S · i + T_orb/(S·P) · F · i · j) mod (T_orb/2)
                     let phase_time =
                         ((t_orb / s) * i_f + (t_orb / (s * p)) * f * i_f * j_f).rem_euclid(t_orb);
                     let t_offset = (t_orb - phase_time).rem_euclid(t_orb);
 
-                    phi0.push(phi_offset.rem_euclid(2.0 * PI));
+                    omega0.push(omega.rem_euclid(2.0 * PI));
                     t0.push(t_offset);
                 }
             }
 
-            let pg = PointGaps::new(2.0 * PI, t0, phi0, t_orb, 2.0 * PI - t_orb * self.omega);
+            let pg = PointGaps::new(2.0 * PI, t0, omega0, t_orb, 2.0 * PI - t_orb * self.omega);
 
             for g in pg.take(1000) {
                 if g.largest_gap < swath {
@@ -198,8 +196,6 @@ impl Constellation {
     ///   central angle σ from the sub-satellite point, perpendicular to
     ///   the ground-track velocity (left, right of motion).
     pub fn simulation(&self, inp: &SimulationInput) -> SimulationData {
-        let sigma = self.coverage_half_angle();
-
         let total_sats = (self.satellites as usize) * (self.planes as usize);
         let total_time = inp.duration.max(0.0);
         let dt = inp.dt.max(f64::EPSILON);
@@ -344,48 +340,43 @@ pub(crate) fn to_lat_lon(u: [f64; 3]) -> (f64, f64) {
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Gap {
     new_t: f64,
-    new_phi: f64,
+    new_omega: f64,
     largest_gap: f64,
 }
 
 #[derive(Debug)]
 struct PointGaps {
     length: f64,
-    phi: Vec<f64>,
+    omega: Vec<f64>,
     t: Vec<f64>,
     t0: Vec<f64>,
-    phi0: Vec<f64>,
+    omega0: Vec<f64>,
     dt: f64,
-    dphi: f64,
+    d_omega: f64,
     i: usize,
 }
 
 impl PointGaps {
-    fn new(length: f64, t0: Vec<f64>, phi0: Vec<f64>, delta_t: f64, delta_phi: f64) -> Self {
+    fn new(length: f64, t0: Vec<f64>, omega0: Vec<f64>, delta_t: f64, delta_omega: f64) -> Self {
         assert_eq!(
             t0.len(),
-            phi0.len(),
-            "delta_t and delta_phi must have the same length"
+            omega0.len(),
+            "delta_t and delta_omega must have the same length"
         );
 
-        let mut pairs: Vec<(f64, f64)> = t0.into_iter().zip(phi0).collect();
+        let mut pairs: Vec<(f64, f64)> = t0.into_iter().zip(omega0).collect();
         pairs.sort_by(|a, b| a.0.total_cmp(&b.0));
 
-        let (t0, phi0): (Vec<f64>, Vec<f64>) = pairs.into_iter().unzip();
+        let (t0, omega0): (Vec<f64>, Vec<f64>) = pairs.into_iter().unzip();
 
         Self {
             length,
-            // No sentinels: `largest_gap` treats `phi` as points on a circle
-            // of circumference `length` and computes the wraparound gap
-            // explicitly. Seeding `[0, length]` here would split the
-            // wraparound arc into two linear pieces and systematically
-            // under-report the largest gap.
-            phi: Vec::new(),
+            omega: Vec::new(),
             t: vec![t0[0]],
             t0,
-            phi0,
+            omega0,
             dt: delta_t,
-            dphi: delta_phi,
+            d_omega: delta_omega,
             i: 0,
         }
     }
@@ -395,18 +386,18 @@ impl Iterator for PointGaps {
     type Item = Gap;
 
     fn next(&mut self) -> Option<Gap> {
-        let n = self.phi0.len();
+        let n = self.omega0.len();
         let k = self.i / n;
         let i = self.i % n;
         let new_t = self.t0[i] + self.dt * k as f64;
-        let new_phi = (self.phi0[i] + self.dphi * k as f64) % self.length;
+        let new_omega = (self.omega0[i] + self.d_omega * k as f64) % self.length;
         self.t.push(new_t);
-        self.phi.push(new_phi);
-        let lg = largest_gap(&mut self.phi, self.length).expect("no gap found");
+        self.omega.push(new_omega);
+        let lg = largest_gap(&mut self.omega, self.length).expect("no gap found");
         self.i += 1;
         Some(Gap {
             new_t,
-            new_phi,
+            new_omega,
             largest_gap: lg,
         })
     }
@@ -534,7 +525,7 @@ mod tests {
             360.0,
             vec![0.0, 1.0, 2.0],
             vec![90.0, 180.0, 270.0],
-            // dt/dphi are irrelevant for the first n steps — we only inspect
+            // dt/d_omega are irrelevant for the first n steps — we only inspect
             // the gap after all three real points have been added.
             10.0,
             0.0,
@@ -578,7 +569,7 @@ mod tests {
         );
         let actual: Vec<(f64, f64, f64)> = pg
             .take(12)
-            .map(|g| (g.new_t, g.new_phi, g.largest_gap))
+            .map(|g| (g.new_t, g.new_omega, g.largest_gap))
             .collect();
 
         let expected = vec![
@@ -597,11 +588,11 @@ mod tests {
         ];
 
         assert_eq!(actual.len(), expected.len());
-        for ((at, aphi, agap), (et, ephi, egap)) in actual.into_iter().zip(expected) {
+        for ((at, a_omega, agap), (et, e_omega, egap)) in actual.into_iter().zip(expected) {
             assert!((at - et).abs() < 1e-9, "t: got {at}, expected {et}");
             assert!(
-                (aphi - ephi).abs() < 1e-9,
-                "t: {at}, phi: got {aphi}, expected {ephi}"
+                (a_omega - e_omega).abs() < 1e-9,
+                "t: {at}, omega: got {a_omega}, expected {e_omega}"
             );
             assert!(
                 (agap - egap).abs() < 1e-9,
